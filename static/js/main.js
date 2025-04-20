@@ -31,7 +31,8 @@ const config = {
     // TPU batch parameters
     tpuEnabled: false,
     batchSize: 64,
-    batchInterval: 200  // ms between batches
+    batchInterval: 200,  // ms between batches
+    world_quality: 'medium'  // default value; will be updated from server config
 };
 
 // Try to load server config
@@ -42,6 +43,8 @@ fetch('/config')
             // Update config with server values
             Object.assign(config, data.config);
             config.tpuEnabled = data.config.use_tpu && data.config.tpu_available;
+            // Update quality setting if provided
+            config.world_quality = data.config.world_quality || config.world_quality;
             
             console.log('Loaded config from server:', config);
             
@@ -170,6 +173,12 @@ function updateUIValues() {
     document.getElementById('z-pos').textContent = camPos.z.toFixed(2);
 }
 
+// Import environment objects from new file
+import { initEnvironment, collidables } from './world_objects.js';
+
+// After scene is created, initialize the environment:
+initEnvironment(scene, config.world_quality);
+
 // Main animation loop
 function animate(now) {
     // Convert time to seconds
@@ -210,11 +219,24 @@ function animate(now) {
     const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0,1,0)).normalize();
     const up = new THREE.Vector3().crossVectors(right, forward).normalize();
     
+    // Capture previous position for collision checks
+    const previousPos = camPos.clone();
+
     // Movement: WASD
     if (keys['w']) camPos.addScaledVector(forward, config.moveSpeed);
     if (keys['s']) camPos.addScaledVector(forward, -config.moveSpeed);
     if (keys['a']) camPos.addScaledVector(right, -config.moveSpeed);
     if (keys['d']) camPos.addScaledVector(right, config.moveSpeed);
+    
+    // --- Simple collision detection: revert movement if collision occurs ---
+    const cameraBox = new THREE.Box3().setFromCenterAndSize(camPos, new THREE.Vector3(0.5,0.5,0.5));
+    for (let i = 0; i < collidables.length; i++) {
+        let objBox = new THREE.Box3().setFromObject(collidables[i]);
+        if (cameraBox.intersectsBox(objBox)) {
+            camPos.copy(previousPos);
+            break;
+        }
+    }
     
     // Update camera uniforms
     uniforms.u_cameraPos.value.copy(camPos);

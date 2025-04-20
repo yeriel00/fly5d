@@ -8,5 +8,6 @@
   "move_speed": 0.1,
   "look_speed": 0.02,
   "glow_factor": 2.0,
-  "glow_intensity": 0.8
+  "glow_intensity": 0.8,
+  "world_quality": "medium"
 }
