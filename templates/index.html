@@ -5,15 +5,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>5D Sphere World Explorer</title>
   <link rel="stylesheet" href="/static/css/main.css">
+  <style>body{margin:0;overflow:hidden;}canvas{display:block;}</style>
 </head>
 <body>
   <canvas id="c"></canvas>
   <div id="info">
-    WASD: Move | Arrows: Look | Space: Reset
+    WASD: Move | R: Reset | Space: Jump/DJump | Mouse: Look
   </div>
 
-  <!-- Three.js from CDN -->
-  <script src="https://unpkg.com/three@0.152.2/build/three.min.js"></script>
+  <!-- ADD Import Map for Three.js Modules -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.152.2/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.152.2/examples/jsm/"
+      }
+    }
+  </script>
+
+  <!-- Your main script (already type="module") -->
   <script type="module" src="/static/js/main.js"></script>
 </body>
 </html>
