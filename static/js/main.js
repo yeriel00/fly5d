@@ -4,7 +4,16 @@
 const canvas = document.getElementById('c');
 const renderer = new THREE.WebGLRenderer({canvas, antialias: true});
 const scene = new THREE.Scene();
-const camera = new THREE.Camera();
+
+// Define initial camera / movement state first:
+let camPos = new THREE.Vector3(0, 0, 5);  // starting camera position
+
+// Replace the previous perspective camera with an orthographic camera:
+const aspect = window.innerWidth / window.innerHeight;
+const d = 10; // controls view size
+const camera = new THREE.OrthographicCamera(-d * aspect, d * aspect, d, -d, 1, 1000);
+camera.position.copy(camPos);
+scene.add(camera);
 
 // Performance monitoring
 let lastFrameTime = 0;
@@ -95,7 +104,6 @@ window.addEventListener('resize', handleResize);
 handleResize();
 
 // Camera / movement state
-let camPos = new THREE.Vector3(0,0,5);
 let yaw = 0, pitch = 0;
 const keys = {};
 
@@ -238,6 +246,10 @@ function animate(now) {
     
     // Update UI display
     updateUIValues();
+    
+    // Update the orthographic camera's position and orientation:
+    camera.position.copy(camPos);
+    camera.lookAt(camPos.clone().add(forward));
     
     // Render scene
     renderer.render(scene, camera);
