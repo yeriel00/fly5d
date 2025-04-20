@@ -4,7 +4,7 @@
 const canvas = document.getElementById('c');
 const renderer = new THREE.WebGLRenderer({canvas, antialias: true});
 const scene = new THREE.Scene();
-const camera = new THREE.Camera();  // Ortho camera for full-screen quad
+const camera = new THREE.Camera();
 
 // Performance monitoring
 let lastFrameTime = 0;
@@ -76,14 +76,12 @@ const uniforms = {
     u_glowIntensity:{ value: config.glowIntensity }
 };
 
-// Full‑screen quad setup
-const geom = new THREE.PlaneBufferGeometry(2,2);
-const mat  = new THREE.ShaderMaterial({
-    uniforms,
-    vertexShader: `varying vec2 v_uv; void main(){v_uv=uv; gl_Position=vec4(position,1.0);}`,
-    fragmentShader: document.getElementById('fragShader').textContent
-});
-scene.add(new THREE.Mesh(geom, mat));
+// Add ambient and directional lights
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+scene.add(ambientLight);
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+dirLight.position.set(5, 10, 7.5);
+scene.add(dirLight);
 
 // Handle window resize
 function handleResize() {
@@ -237,12 +235,6 @@ function animate(now) {
             break;
         }
     }
-    
-    // Update camera uniforms
-    uniforms.u_cameraPos.value.copy(camPos);
-    uniforms.u_cameraForward.value.copy(forward);
-    uniforms.u_cameraRight.value.copy(right);
-    uniforms.u_cameraUp.value.copy(up);
     
     // Update UI display
     updateUIValues();
