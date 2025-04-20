@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planetary Explorer</title>
+    <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+    <div id="container">
+        <canvas id="c"></canvas>
+        <div id="info">
+            <div class="controls-info">WASD - Move | Mouse - Look | SPACE - Jump</div>
+            <div id="dimensions">Explore the world!</div>
+            <div id="position">Click to start</div>
+            <div id="fps">-</div>
+        </div>
+    </div>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.152.2/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.152.2/examples/"
+            }
+        }
+    </script>
+    <script type="module" src="js/main.js"></script>
+</body>
+</html>

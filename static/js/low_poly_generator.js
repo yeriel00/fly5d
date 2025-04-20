@@ -214,7 +214,7 @@ export default class LowPolyGenerator {
     rockGeo.computeVertexNormals();
     
     // Use a smoother material to give solid appearance
-    const rockMat = new THREE.MeshLambertMaterial({
+    const rockMat = new THREE.MeshStandardMaterial({
       color: new THREE.Color(0.5, 0.5, 0.5),
       flatShading: false, // Smooth shading
       roughness: 0.8,     // Make it rough-looking

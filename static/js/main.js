@@ -318,6 +318,60 @@ function enhanceEnvironment() {
   }
 }
 
+// *** PHYSICS MASTER CONTROLS ***
+// Add global physics controls that can be adjusted
+const physics = {
+  gravity: 0.15,         // Default gravity value (higher = stronger pull)
+  jumpStrength: 1,     // Default jump strength
+  maxJumps: 2,            // Number of jumps allowed (2 = double jump)
+  
+  // Method to update the controls when these values change
+  updateControls() {
+    if (!controls) return;
+    
+    // Update control values
+    controls.gravity = this.gravity;
+    controls.jumpStrength = this.jumpStrength;
+    controls.maxJumps = this.maxJumps;
+    controls.jumpsRemaining = Math.min(controls.jumpsRemaining, this.maxJumps);
+    
+    console.log(`Physics updated: gravity=${this.gravity}, jumpStrength=${this.jumpStrength}, maxJumps=${this.maxJumps}`);
+  },
+  
+  // Convenient methods to adjust values
+  setGravity(value) {
+    this.gravity = value;
+    this.updateControls();
+    return this.gravity;
+  },
+  
+  setJumpStrength(value) {
+    this.jumpStrength = value;
+    this.updateControls();
+    return this.jumpStrength;
+  },
+  
+  // Adjust values by percentage
+  adjustGravity(percentage) {
+    this.gravity *= (1 + percentage/100);
+    this.updateControls();
+    return this.gravity;
+  },
+  
+  adjustJumpStrength(percentage) {
+    this.jumpStrength *= (1 + percentage/100);
+    this.updateControls();
+    return this.jumpStrength;
+  },
+
+  // New method to set max jumps
+  setMaxJumps(value) {
+    this.maxJumps = Math.max(1, Math.floor(value));
+    this.updateControls();
+    return this.maxJumps;
+  },
+};
+
 // --- Initialize Controls ---
 debug("Initializing controls...");
 const controls = new SphereControls(
@@ -328,9 +382,10 @@ const controls = new SphereControls(
     getTerrainHeight: getTerrainHeight,
     moveSpeed: 1.0, 
     lookSpeed: 0.002,
-    jumpStrength: 0.5,
-    gravity: -0.03,
-    eyeHeight: 1.9,     // Increased from 1.8 to 1.9 (~1ft taller)
+    jumpStrength: physics.jumpStrength, // Use from physics object
+    gravity: physics.gravity,           // Use from physics object
+    maxJumps: physics.maxJumps,  // Pass max jumps parameter
+    eyeHeight: 1.9,    
     createPlayerBody: true,
     playerRadius: 1.0,
     collidables: collidables,
@@ -514,9 +569,14 @@ function checkForAppleDetachment() {
   });
 }
 
+// Enhanced debug commands to include physics adjustment
 function setupDebugCommands() {
   console.log("Debug commands available:");
   console.log("- showCollidables() - List all collision objects");
+  console.log("- physics.setGravity(value) - Change gravity strength");
+  console.log("- physics.setJumpStrength(value) - Change jump height");
+  console.log("- physics.adjustGravity(percent) - Adjust gravity by percentage");
+  console.log("- physics.adjustJumpStrength(percent) - Adjust jump by percentage");
   
   // Add to window for console access
   window.showCollidables = () => {
@@ -541,7 +601,70 @@ function setupDebugCommands() {
     
     console.log("Collidables by type:", types);
   };
+  
+  // Expose physics controls to global scope
+  window.physics = physics;
+  
+  // Quick preset configurations
+  window.presets = {
+    moonGravity() {
+      physics.setGravity(0.04);
+      physics.setJumpStrength(1.0);
+      physics.setMaxJumps(3); // More jumps on the moon!
+      console.log("Moon gravity preset applied: low gravity, high jumps, triple jump!");
+    },
+    
+    earthGravity() {
+      physics.setGravity(0.15);
+      physics.setJumpStrength(0.5);
+      physics.setMaxJumps(2); // Standard double-jump
+      console.log("Earth gravity preset applied: default settings with double-jump");
+    },
+    
+    jupiterGravity() {
+      physics.setGravity(0.4);
+      physics.setJumpStrength(0.25);
+      physics.setMaxJumps(1); // Only one jump on Jupiter - it's too heavy!
+      console.log("Jupiter gravity preset applied: high gravity, small jumps, no double-jump");
+    }
+  };
+  
+  console.log("Physics presets: presets.moonGravity(), presets.earthGravity(), presets.jupiterGravity()");
 }
+
+// Add debug display for player state
+function showPlayerInfo() {
+  // Get player info from controls
+  const onGround = controls.onGround;
+  const isJumping = controls.isJumping;
+  const jumpsRemaining = controls.jumpsRemaining;
+  const velocity = controls.getVelocity();
+  const speed = velocity.length().toFixed(2);
+  const pos = controls.getObject().position;
+  const height = pos.length() - R;
+  
+  // Add gravity analysis
+  const gravDir = pos.clone().normalize().negate();
+  const gravComponent = velocity.dot(gravDir);
+  const isGravityWorking = gravComponent > 0 ? "YES - falling" : "NO - rising";
+  
+  console.log(`Player: onGround=${onGround}, isJumping=${isJumping}, jumps=${jumpsRemaining}/${controls.maxJumps}, speed=${speed}, height=${height.toFixed(2)}`);
+  console.log(`Gravity working? ${isGravityWorking}, vertical speed=${gravComponent.toFixed(3)}`);
+}
+
+// Add to global for console access
+window.debugPlayer = showPlayerInfo;
+window.makeJump = () => {
+  controls.velocity.addScaledVector(
+    controls.getObject().position.clone().normalize(),
+    1.0
+  );
+  controls.isJumping = true;
+  controls.onGround = false;
+  console.log("Force jump applied!");
+};
+
+console.log("Debug commands: debugPlayer(), makeJump()");
 
 // Call at startup
 setupDebugCommands();
