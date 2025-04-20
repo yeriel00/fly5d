@@ -250,12 +250,13 @@ function animate(now) {
     
     // Update UI display
     updateUIValues();
-    camera.updateMatrixWorld();  // ensure transformation is updated
+    
     // Update the orthographic camera's position and orientation:
     camera.position.copy(camPos);
     camera.lookAt(camPos.clone().add(forward));
-    requestAnimationFrame(animate);
-    // Render scene
+    camera.updateMatrixWorld();  // ensure transformation is updated
+    
+    // Render the scene and schedule next frame (only one call to requestAnimationFrame)
     renderer.render(scene, camera);
     requestAnimationFrame(animate);
 }
