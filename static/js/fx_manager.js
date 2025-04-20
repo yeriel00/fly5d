@@ -29,11 +29,16 @@ export default class FXManager {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     
-    // Improve output quality
-    this.renderer.outputEncoding = THREE.sRGBEncoding;
+    // FIXED: Replace deprecated properties with current ones
+    // this.renderer.outputEncoding = THREE.sRGBEncoding;
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace; // Updated property
+    
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.2;
-    this.renderer.physicallyCorrectLights = true;
+    
+    // FIXED: Replace physicallyCorrectLights with useLegacyLights (inverse logic)
+    // this.renderer.physicallyCorrectLights = true;
+    this.renderer.useLegacyLights = false; // false = physically correct
   }
   
   setupSky() {

@@ -66,6 +66,18 @@ export default class SphereControls {
     this.slideAngleThreshold = 0.6; // cos of max angle (~53 degrees)
     this.slideAcceleration = 0.05;  // Sliding force
     this.slideFriction = 0.98;      // Slide friction (reduces speed)
+
+    // Physics parameters
+    this.jumpStrength = options.jumpStrength || 0.5;
+    this.gravity = options.gravity || -0.03;
+    this.jumpEnabled = true;
+    this.isJumping = false;
+    this.onGround = true;
+    
+    // Add jump counts for double jump support
+    this.maxJumps = options.maxJumps || 2; // Default to double jump
+    this.jumpsRemaining = this.maxJumps;
+    this.jumpCooldown = 0; // Cooldown timer between jumps
   }
 
   getObject() {
@@ -95,32 +107,168 @@ export default class SphereControls {
     this.pitchObject.rotation.x = this.pitch;
   }
 
-  onKeyDown(e) { this.keys[e.key.toLowerCase()] = true; }
+  onKeyDown(e) { 
+    this.keys[e.key.toLowerCase()] = true; 
+    
+    // Enhanced jump handler with double jump and mid-run jump
+    if (e.key === ' ' && this.jumpEnabled && this.jumpsRemaining > 0 && this.jumpCooldown <= 0) {
+      // Calculate jump direction (away from planet center)
+      const jumpDir = this.yawObject.position.clone().normalize();
+      
+      // Calculate jump force - we'll use the same strength for all jumps
+      const jumpForce = this.jumpStrength;
+      
+      // For first jump, set velocity directly
+      if (this.onGround) {
+        this.velocity = jumpDir.multiplyScalar(jumpForce);
+      } else {
+        // For mid-air jumps, preserve some horizontal momentum but reset vertical
+        const upDir = this.yawObject.position.clone().normalize();
+        const verticalComponent = upDir.clone().multiplyScalar(this.velocity.dot(upDir));
+        
+        // Remove downward momentum for cleaner double jump
+        if (verticalComponent.dot(upDir) < 0) {
+          this.velocity.sub(verticalComponent);
+        }
+        
+        // Add new jump impulse
+        this.velocity.add(jumpDir.clone().multiplyScalar(jumpForce));
+      }
+      
+      // Mark as jumping and decrement jumps
+      this.isJumping = true;
+      this.onGround = false;
+      this.jumpsRemaining--;
+      
+      // Set small cooldown to prevent accidental double-taps
+      this.jumpCooldown = 0.2;
+      
+      console.log(`Jump ${this.maxJumps - this.jumpsRemaining} of ${this.maxJumps} with force: ${jumpForce.toFixed(2)}`);
+    }
+  }
   onKeyUp(e)   { this.keys[e.key.toLowerCase()] = false; }
 
   update(delta) {
     // Cache old position for collision response
     const oldPos = this.yawObject.position.clone();
     
-    // Apply gravity/jumping
-    // ...existing gravity code if any...
-    
-    // Reset surface state
-    this.onGround = false;
-    this.sliding = false;
-    this.currentSurface = null;
-    
-    // Process keyboard movement
+    // ********************************************
+    // UNIFIED GRAVITY AND SLIDING FIX
+    // ********************************************
     const pos = this.yawObject.position;
+    
+    // This is our planet-relative up vector - ALWAYS pointing away from center
     const upDir = pos.clone().normalize();
+    
+    // Always apply gravity when not on ground or when sliding
+    if (!this.onGround || this.sliding) {
+      // Direction toward planet center (gravity direction)
+      const gravityDir = upDir.clone().negate();
+      
+      // Apply scaled gravity force toward planet center
+      const gravityForce = this.gravity * delta * 60;
+      this.velocity.addScaledVector(gravityDir, gravityForce);
+      
+      // Debug only when actually falling
+      if (!this.onGround) {
+        console.log(`Applying gravity (strength=${gravityForce.toFixed(3)}) toward center`);
+      }
+    }
+    
+    // If we have any velocity, apply it
+    if (this.velocity.lengthSq() > 0.000001) {
+      // Apply velocity to position
+      const newPos = pos.clone().add(this.velocity);
+      
+      // Check ground collision with terrain
+      const newDir = newPos.clone().normalize();
+      const terrainHeight = this.getTerrainHeight(newDir);
+      const terrainRadius = this.radius + terrainHeight;
+      
+      // If we'd be below terrain, place on surface
+      if (newPos.length() < terrainRadius + 0.2) {
+        // Position at surface with small offset
+        this.yawObject.position.copy(newDir.multiplyScalar(terrainRadius + 0.2));
+        
+        // Calculate up vector at new position
+        const surfaceNormal = this.yawObject.position.clone().normalize();
+        
+        // Calculate how steep this surface is - using slight ray offset to check area
+        const checkDist = 0.5; // Check a bit ahead for slopes
+        const checkDir1 = newDir.clone().add(new THREE.Vector3(0.1, 0, 0).normalize()).normalize();
+        const checkDir2 = newDir.clone().add(new THREE.Vector3(0, 0, 0.1).normalize()).normalize();
+        
+        const h1 = this.getTerrainHeight(checkDir1);
+        const h2 = this.getTerrainHeight(checkDir2);
+        
+        // If slope is too steep, slide instead of stopping
+        const heightDiff = Math.max(Math.abs(h1 - terrainHeight), Math.abs(h2 - terrainHeight));
+        const isSlope = heightDiff > 0.2;
+        
+        // Project velocity onto surface plane - only cancel downward velocity
+        const verticalSpeed = this.velocity.dot(surfaceNormal);
+        if (verticalSpeed < 0) { // Only cancel downward velocity
+          const verticalVelocity = surfaceNormal.clone().multiplyScalar(verticalSpeed);
+          this.velocity.sub(verticalVelocity);
+          
+          // Apply landing friction - less on slopes
+          this.velocity.multiplyScalar(isSlope ? 0.95 : 0.6);
+          
+          // Keep sliding state on slopes
+          this.sliding = isSlope;
+          this.isJumping = false;
+          this.onGround = true;
+          
+          if (!isSlope) {
+            console.log("Landed on flat ground!");
+          } else {
+            console.log("Landed on slope - sliding");
+          }
+        }
+      } else {
+        // Continue moving in air
+        this.yawObject.position.copy(newPos);
+        this.onGround = false;
+      }
+      
+      // If on ground but still moving, apply appropriate friction
+      if (this.onGround) {
+        // Apply less friction when sliding
+        const frictionFactor = this.sliding ? 0.98 : 0.9;
+        this.velocity.multiplyScalar(frictionFactor);
+        
+        // Stop completely at low velocities when not sliding
+        if (!this.sliding && this.velocity.lengthSq() < 0.01) {
+          this.velocity.set(0, 0, 0);
+        }
+      }
+      
+      // Update up vector to match position on the sphere
+      this.yawObject.up.copy(this.yawObject.position.clone().normalize());
+      
+      // Log velocity for debugging
+      if (this.isJumping) {
+        const verticalComp = this.velocity.dot(this.yawObject.up);
+        const horizontalComp = Math.sqrt(this.velocity.lengthSq() - verticalComp * verticalComp);
+        console.log(`Jumping velocity: ${this.velocity.length().toFixed(2)}, ` +
+                    `vert: ${verticalComp.toFixed(2)}, horiz: ${horizontalComp.toFixed(2)}`);
+      }
+    }
+    
+    // Calculate current height above terrain for use in movement
+    const currentDir = this.yawObject.position.clone().normalize();
+    const currentTerrainHeight = this.getTerrainHeight(currentDir);
+    const currentTerrainRadius = this.radius + currentTerrainHeight;
+    const heightAboveTerrain = this.yawObject.position.length() - currentTerrainRadius;
+    
     // get camera forward
     const forward = new THREE.Vector3();
-    this.camera.getWorldDirection(forward);              // direction camera faces
-    forward.projectOnPlane(upDir).normalize();           // flatten to tangent
-
+    this.camera.getWorldDirection(forward);
+    forward.projectOnPlane(upDir).normalize();
+    
     // compute right = forward × up
     const right = new THREE.Vector3().crossVectors(forward, upDir).normalize();
-
+    
     // accumulate input
     const mv = new THREE.Vector3();
     if ( this.keys['w'] ) mv.add(forward);
@@ -129,13 +277,23 @@ export default class SphereControls {
     if ( this.keys['d'] ) mv.add(right);
 
     if ( mv.lengthSq() > 0 ) {
-      mv.normalize().multiplyScalar(this.moveSpeed);
+      // Apply movement speed - reduce when in air or sliding
+      const speedMultiplier = (this.onGround && !this.sliding) ? 1.0 : 0.8;
+      mv.normalize().multiplyScalar(this.moveSpeed * speedMultiplier);
 
-      // new world position
+      // Calculate new direction on sphere
       const np = pos.clone().add(mv);
       const nDir = np.clone().normalize();
+      
+      // Get terrain height at new position
       const h = this.getTerrainHeight(nDir);
-      const finalPos = nDir.multiplyScalar(this.radius + h);
+      
+      // FIXED: Preserve height above terrain when moving
+      // Instead of placing directly on terrain surface, add the current height above terrain
+      const terrainPoint = nDir.clone().multiplyScalar(this.radius + h);
+      const finalPos = terrainPoint.clone().add(
+        nDir.clone().multiplyScalar(Math.max(0, heightAboveTerrain))
+      );
 
       // Only skip items explicitly flagged noCollision (grass)
       const validCollidables = this.collidables.filter((obj, index) => {
@@ -212,6 +370,17 @@ export default class SphereControls {
       this.velocity.multiplyScalar(0.9);
     }
     
+    // Update jump cooldown
+    if (this.jumpCooldown > 0) {
+      this.jumpCooldown -= delta;
+    }
+    
+    // When landing, reset jump counter
+    if (this.onGround && this.jumpsRemaining < this.maxJumps) {
+      this.jumpsRemaining = this.maxJumps;
+      console.log("Jump counter reset - ready to jump again");
+    }
+    
     return true;
   }
 
@@ -277,6 +446,24 @@ export default class SphereControls {
       if (surfaceDot < this.slideAngleThreshold && surfaceObj.mesh.userData.isRock) {
         this.sliding = true;
       }
+      
+      // IMPORTANT: Set on ground state here clearly
+      this.onGround = true;
+      console.log("Ground detected in surface check");
+      
+    } else {
+      // Add else clause to make sure we know when we're not on ground
+      // Only set false if we're close to the ground and should be checking
+      const pos = this.yawObject.position;
+      const dir = pos.clone().normalize();
+      const terrainHeight = this.getTerrainHeight(dir);
+      const terrainRadius = this.radius + terrainHeight;
+      
+      // If we're close to the ground but not touching any collidable, we should still be on regular ground
+      const distanceToTerrain = pos.length() - terrainRadius;
+      if (distanceToTerrain < 0.2) {
+        this.onGround = true;
+      }
     }
   }
 
@@ -304,5 +491,10 @@ export default class SphereControls {
     document.removeEventListener('keyup', this.onKeyUp);
     document.removeEventListener('pointerlockchange', this.onPointerLock);
     document.removeEventListener('mousemove', this.onMouseMove);
+  }
+
+  // Add a helper method to get the current velocity
+  getVelocity() {
+    return this.velocity.clone();
   }
 }
