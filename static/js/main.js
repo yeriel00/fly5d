@@ -6,18 +6,27 @@ const renderer = new THREE.WebGLRenderer({canvas, antialias: true});
 const scene = new THREE.Scene();
 
 // Define initial camera / movement state first:
-let camPos = new THREE.Vector3(0, 0, 5);  // starting camera position
+let camPos = new THREE.Vector3(0, 1.6, 5); // Start slightly above ground
+let yaw = 0, pitch = 0;
+const keys = {};
 
-// Replace the previous perspective camera with an orthographic camera:
+// Orthographic camera setup:
 const aspect = window.innerWidth / window.innerHeight;
-const d = 10; // controls view size
-const camera = new THREE.OrthographicCamera(-d * aspect, d * aspect, d, -d, 1, 1000);
+const frustumSize = 15; // Adjust this value to control zoom/view size. Larger means more zoomed out.
+const camera = new THREE.OrthographicCamera(
+    frustumSize * aspect / -2,
+    frustumSize * aspect / 2,
+    frustumSize / 2,
+    frustumSize / -2,
+    0.1, // Near plane - adjusted from 1 to see closer objects
+    1000 // Far plane
+);
 camera.position.copy(camPos);
 scene.add(camera);
 
-// After creating the camera and adding it to the scene, add:
-const cameraHelper = new THREE.CameraHelper(camera);
-scene.add(cameraHelper);
+// Remove the camera helper
+// const cameraHelper = new THREE.CameraHelper(camera);
+// scene.add(cameraHelper);
 
 // Performance monitoring
 let lastFrameTime = 0;
@@ -96,16 +105,25 @@ const dirLight = new THREE.DirectionalLight(0xffffff, 1.0); // boost directional
 dirLight.position.set(5, 10, 7.5);
 scene.add(dirLight);
 
-// Handle window resize
+// Handle window resize - update camera projection
 function handleResize() {
     const width = window.innerWidth;
     const height = window.innerHeight;
     renderer.setSize(width, height);
-    uniforms.u_resolution.value.set(width, height);
-}
 
+    // Update orthographic camera frustum
+    const aspect = width / height;
+    camera.left = frustumSize * aspect / -2;
+    camera.right = frustumSize * aspect / 2;
+    camera.top = frustumSize / 2;
+    camera.bottom = frustumSize / -2;
+    camera.updateProjectionMatrix(); // IMPORTANT for ortho camera resize
+
+    // Update resolution uniform if still used elsewhere
+    // uniforms.u_resolution.value.set(width, height);
+}
 window.addEventListener('resize', handleResize);
-handleResize();
+handleResize(); // Initial call
 
 // Camera / movement state
 let yaw = 0, pitch = 0;
@@ -191,11 +209,10 @@ initEnvironment(scene, config.world_quality);
 
 // Main animation loop
 function animate(now) {
-    // Convert time to seconds
     now *= 0.001;
     const deltaTime = now - lastFrameTime;
     lastFrameTime = now;
-    
+
     // Update FPS counter
     frameCount++;
     if (now - lastFpsUpdate > 1.0) { // Update every second
@@ -203,33 +220,32 @@ function animate(now) {
         frameCount = 0;
         lastFpsUpdate = now;
     }
-    
-    // Update time uniform
-    uniforms.u_time.value = now;
-    
-    // Handle dimension changes
+
+    // Update time uniform (if needed)
+    // uniforms.u_time.value = now;
+
+    // Handle dimension changes (updates UI stats, no visual effect yet)
     if (keys['q']) uniforms.u_dim.value.x += config.dimChangeSpeed;
     if (keys['e']) uniforms.u_dim.value.x -= config.dimChangeSpeed;
     if (keys['r']) uniforms.u_dim.value.y += config.dimChangeSpeed;
     if (keys['f']) uniforms.u_dim.value.y -= config.dimChangeSpeed;
-    
+
     // Camera orientation: arrows
-    if (keys['arrowleft'])  yaw   -= config.lookSpeed;
-    if (keys['arrowright']) yaw   += config.lookSpeed;
-    if (keys['arrowup'])    pitch = Math.min(pitch + config.lookSpeed, Math.PI/2 - 0.01);
-    if (keys['arrowdown'])  pitch = Math.max(pitch - config.lookSpeed, -Math.PI/2 + 0.01);
-    
+    if (keys['arrowleft']) yaw -= config.lookSpeed;
+    if (keys['arrowright']) yaw += config.lookSpeed;
+    if (keys['arrowup']) pitch = Math.min(pitch + config.lookSpeed, Math.PI / 2 - 0.01);
+    if (keys['arrowdown']) pitch = Math.max(pitch - config.lookSpeed, -Math.PI / 2 + 0.01);
+
     // Calculate camera vectors
     const forward = new THREE.Vector3(
         Math.sin(yaw) * Math.cos(pitch),
         Math.sin(pitch),
         -Math.cos(yaw) * Math.cos(pitch)
     ).normalize();
-    
-    const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0,1,0)).normalize();
-    const up = new THREE.Vector3().crossVectors(right, forward).normalize();
-    
-    // Capture previous position for collision checks
+    const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+    // const up = new THREE.Vector3().crossVectors(right, forward).normalize(); // Ortho camera manages its own up
+
+    // Store previous position for collision
     const previousPos = camPos.clone();
 
     // Movement: WASD
@@ -237,26 +253,37 @@ function animate(now) {
     if (keys['s']) camPos.addScaledVector(forward, -config.moveSpeed);
     if (keys['a']) camPos.addScaledVector(right, -config.moveSpeed);
     if (keys['d']) camPos.addScaledVector(right, config.moveSpeed);
-    
-    // --- Simple collision detection: revert movement if collision occurs ---
-    const cameraBox = new THREE.Box3().setFromCenterAndSize(camPos, new THREE.Vector3(0.5,0.5,0.5));
+    // Optional: Add vertical movement (e.g., space/shift) if desired
+    // if (keys[' ']) camPos.y += config.moveSpeed;
+    // if (keys['shift']) camPos.y -= config.moveSpeed;
+
+    // Collision detection
+    const cameraBox = new THREE.Box3().setFromCenterAndSize(camPos, new THREE.Vector3(0.5, 1.6, 0.5)); // Adjust size
     for (let i = 0; i < collidables.length; i++) {
-        let objBox = new THREE.Box3().setFromObject(collidables[i]);
-        if (cameraBox.intersectsBox(objBox)) {
-            camPos.copy(previousPos);
-            break;
+        // Ensure collidable is a Mesh or Group, not just a geometry/material
+        if (collidables[i].geometry || collidables[i].isGroup) {
+             let objBox = new THREE.Box3().setFromObject(collidables[i]);
+             if (cameraBox.intersectsBox(objBox)) {
+                 camPos.copy(previousPos);
+                 break;
+             }
+        } else {
+            console.warn("Collidable item is not a valid Object3D:", collidables[i]);
         }
     }
-    
+
+    // Ensure camera doesn't go below ground
+    camPos.y = Math.max(camPos.y, 0.5); // Adjust minimum height if needed
+
     // Update UI display
     updateUIValues();
-    
-    // Update the orthographic camera's position and orientation:
+
+    // Update the orthographic camera's position and orientation
     camera.position.copy(camPos);
     camera.lookAt(camPos.clone().add(forward));
-    camera.updateMatrixWorld();  // ensure transformation is updated
-    
-    // Render the scene and schedule next frame (only one call to requestAnimationFrame)
+    // camera.updateMatrixWorld(); // Often implicitly handled by renderer, but keep if issues persist
+
+    // Render the scene
     renderer.render(scene, camera);
     requestAnimationFrame(animate);
 }
