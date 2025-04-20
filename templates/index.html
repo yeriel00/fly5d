@@ -20,6 +20,15 @@
 
 <!-- Three.js from CDN -->
 <script src="https://unpkg.com/three@0.152.2/build/three.min.js"></script>
+<!-- Import Addons -->
+<script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.152.2/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.152.2/examples/jsm/"
+        }
+    }
+</script>
 
 <!-- Optionally remove the shader block if not needed:
 <script id="fragShader" type="x-shader/x-fragment">
@@ -179,6 +188,83 @@ void main() {
 }
 </script>
 -->
+
+<!-- NEW Distortion Fragment Shader (Tiny Planet Version) -->
+<script id="distortionFragShader" type="x-shader/x-fragment">
+    precision highp float;
+    uniform sampler2D tDiffuse; // Rendered scene texture
+    uniform vec2 u_resolution;
+    uniform vec2 u_dim;        // 4D/5D parameters (can influence strength/zoom)
+    uniform float u_strength;  // Overall effect strength/zoom, derived from u_dim
+
+    varying vec2 vUv;
+
+    // Function to map screen UV to a direction vector, then project to sphere
+    vec2 tinyPlanetProjection(vec2 uv, float strength) {
+        // Convert UV [0,1] to Normalized Device Coords [-1, 1]
+        vec2 ndc = (uv - 0.5) * 2.0;
+
+        // Adjust aspect ratio
+        float aspect = u_resolution.x / u_resolution.y;
+        ndc.x *= aspect;
+
+        // Simple spherical mapping (adjust strength for zoom)
+        // 'strength' here acts like an inverse zoom or field of view control
+        float zoom = 1.0 / (strength + 0.1); // Avoid division by zero
+        float r = length(ndc) * zoom; // Scale radius by zoom
+
+        // Check if point is outside the projected circle
+        if (r > 1.0) {
+            return vec2(-1.0); // Indicate an invalid coordinate (will be handled later)
+        }
+
+        // Calculate angle and map back to UV-like space for texture lookup
+        // This is a simplified mapping; more complex fisheye/stereographic is possible
+        float theta = atan(ndc.y, ndc.x); // Angle
+        float phi = r * PI * 0.5; // Map radius to latitude-like angle (0 at center, PI/2 at edge)
+
+        // Convert spherical-like coords back to a distorted UV lookup
+        // This part simulates looking "down" onto the sphere
+        vec2 lookupUv;
+        lookupUv.x = 0.5 + 0.5 * r * cos(theta); // Adjust mapping as needed
+        lookupUv.y = 0.5 + 0.5 * r * sin(theta);
+
+        // Alternative mapping (more like equirectangular lookup if scene was rendered that way)
+        // lookupUv.x = theta / (2.0 * PI) + 0.5;
+        // lookupUv.y = phi / PI;
+
+        return lookupUv;
+    }
+
+
+    void main() {
+        // Use u_strength (derived from u_dim) to control the projection strength/zoom
+        // Smaller strength = more zoomed in planet
+        vec2 projectedUv = tinyPlanetProjection(vUv, u_strength);
+
+        vec4 color;
+
+        // If projection returned invalid coords (outside the circle), make it black/transparent
+        if (projectedUv.x < 0.0) {
+             color = vec4(0.0, 0.0, 0.0, 1.0); // Background color
+        } else {
+            // Add chromatic aberration based on dimensions (optional)
+            float ca_offset = (sin(u_dim.x * 1.5) + cos(u_dim.y * 1.2)) * 0.003 * u_strength;
+
+            // Sample texture at projected coordinates
+            color.r = texture2D(tDiffuse, tinyPlanetProjection(vUv + vec2(ca_offset, 0.0), u_strength)).r;
+            color.g = texture2D(tDiffuse, projectedUv).g;
+            color.b = texture2D(tDiffuse, tinyPlanetProjection(vUv - vec2(ca_offset, 0.0), u_strength)).b;
+            color.a = texture2D(tDiffuse, projectedUv).a;
+
+            // Fade edges slightly
+            float edgeFade = smoothstep(1.0, 0.9, length((vUv - 0.5) * 2.0) * (1.0 / (u_strength + 0.1)));
+            color.rgb *= edgeFade;
+        }
+
+        gl_FragColor = color;
+    }
+</script>
 
 <script type="module" src="/static/js/main.js"></script>
 </body>

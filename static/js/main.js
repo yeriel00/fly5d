@@ -10,23 +10,19 @@ let camPos = new THREE.Vector3(0, 1.6, 5); // Start slightly above ground
 let yaw = 0, pitch = 0;
 const keys = {};
 
-// Orthographic camera setup:
+// --- Restore Orthographic Camera ---
 const aspect = window.innerWidth / window.innerHeight;
-const frustumSize = 15; // Adjust this value to control zoom/view size. Larger means more zoomed out.
+const frustumSize = 15; // Adjust this value based on world size and desired zoom
 const camera = new THREE.OrthographicCamera(
     frustumSize * aspect / -2,
     frustumSize * aspect / 2,
     frustumSize / 2,
     frustumSize / -2,
-    0.1, // Near plane - adjusted from 1 to see closer objects
-    1000 // Far plane
+    0.1,
+    1000
 );
 camera.position.copy(camPos);
 scene.add(camera);
-
-// Remove the camera helper
-// const cameraHelper = new THREE.CameraHelper(camera);
-// scene.add(cameraHelper);
 
 // Performance monitoring
 let lastFrameTime = 0;
@@ -105,7 +101,7 @@ const dirLight = new THREE.DirectionalLight(0xffffff, 1.0); // boost directional
 dirLight.position.set(5, 10, 7.5);
 scene.add(dirLight);
 
-// Handle window resize - update camera projection
+// Handle window resize - update orthographic camera
 function handleResize() {
     const width = window.innerWidth;
     const height = window.innerHeight;
@@ -118,9 +114,6 @@ function handleResize() {
     camera.top = frustumSize / 2;
     camera.bottom = frustumSize / -2;
     camera.updateProjectionMatrix(); // IMPORTANT for ortho camera resize
-
-    // Update resolution uniform if still used elsewhere
-    // uniforms.u_resolution.value.set(width, height);
 }
 window.addEventListener('resize', handleResize);
 handleResize(); // Initial call
@@ -220,11 +213,12 @@ function animate(now) {
     // Update time uniform (if needed)
     // uniforms.u_time.value = now;
 
-    // Handle dimension changes (updates UI stats, no visual effect yet)
+    // Handle dimension changes (updates u_dim for the shader)
     if (keys['q']) uniforms.u_dim.value.x += config.dimChangeSpeed;
     if (keys['e']) uniforms.u_dim.value.x -= config.dimChangeSpeed;
     if (keys['r']) uniforms.u_dim.value.y += config.dimChangeSpeed;
     if (keys['f']) uniforms.u_dim.value.y -= config.dimChangeSpeed;
+    // Clamp u_dim values if needed, e.g., uniforms.u_dim.value.x = Math.max(0.1, uniforms.u_dim.value.x);
 
     // Camera orientation: arrows
     if (keys['arrowleft']) yaw -= config.lookSpeed;
@@ -253,6 +247,19 @@ function animate(now) {
     // if (keys[' ']) camPos.y += config.moveSpeed;
     // if (keys['shift']) camPos.y -= config.moveSpeed;
 
+    // --- Implement Torus-like Wrapping for Camera ---
+    // Define the boundaries of the fundamental domain
+    const domainSize = 50; // Should match the size used in world_objects.js
+    const halfDomain = domainSize / 2;
+    // Wrap X coordinate
+    if (camPos.x > halfDomain) camPos.x -= domainSize;
+    else if (camPos.x < -halfDomain) camPos.x += domainSize;
+    // Wrap Z coordinate
+    if (camPos.z > halfDomain) camPos.z -= domainSize;
+    else if (camPos.z < -halfDomain) camPos.z += domainSize;
+    // Note: We wrap the camera position *before* collision detection
+    // This makes the world appear infinite/repeating.
+
     // Collision detection
     const cameraBox = new THREE.Box3().setFromCenterAndSize(camPos, new THREE.Vector3(0.5, 1.6, 0.5)); // Adjust size
     for (let i = 0; i < collidables.length; i++) {
@@ -276,10 +283,9 @@ function animate(now) {
 
     // Update the orthographic camera's position and orientation
     camera.position.copy(camPos);
-    camera.lookAt(camPos.clone().add(forward));
-    // camera.updateMatrixWorld(); // Often implicitly handled by renderer, but keep if issues persist
+    camera.lookAt(camPos.clone().add(forward)); // Make sure 'forward' is calculated correctly
 
-    // Render the scene
+    // Render the scene using the standard renderer
     renderer.render(scene, camera);
     requestAnimationFrame(animate);
 }
