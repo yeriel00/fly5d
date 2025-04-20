@@ -1,24 +1,113 @@
+// --- Import Three.js Module ---
+import * as THREE from 'three';
+// --- End Import ---
+
 export const collidables = [];
+
+// Helper function to get terrain height at a specific point on the sphere
+function getTerrainHeight(pos, R) {
+  const normPos = pos.clone().normalize();
+  const noiseFrequency = 5.0;
+  const noiseAmplitude = 1.5;
+  
+  // Same noise function used for terrain generation
+  const noise = Math.sin(normPos.x * noiseFrequency) * 
+                Math.sin(normPos.y * noiseFrequency) * 
+                Math.cos(normPos.z * noiseFrequency);
+  
+  return noise * noiseAmplitude;
+}
 
 export function initEnvironment(scene, quality) {
   const R = 50; // Planet radius
-  const seg = quality==='high'?32:quality==='medium'?16:8;
+  const seg = quality === 'high' ? 64 : quality === 'medium' ? 32 : 16; // Increased segments for smoother terrain
 
   // --- Planet Sphere ---
   const sphereGeo = new THREE.SphereGeometry(R, seg, seg);
-  const sphereMat = new THREE.MeshLambertMaterial({ color: 0x224422 });
+
+  // --- Add Terrain Variation ---
+  const positionAttribute = sphereGeo.getAttribute('position');
+  const vertex = new THREE.Vector3();
+  const noiseFrequency = 5.0; // How many bumps
+  const noiseAmplitude = 1.5; // How high the bumps are
+
+  for (let i = 0; i < positionAttribute.count; i++) {
+      vertex.fromBufferAttribute(positionAttribute, i); // Get vertex position
+
+      // Simple noise based on vertex position (using sine waves)
+      let noise = Math.sin(vertex.x * noiseFrequency / R) *
+                  Math.sin(vertex.y * noiseFrequency / R) *
+                  Math.cos(vertex.z * noiseFrequency / R);
+
+      // Calculate displacement vector (normalized vertex direction)
+      const displacement = vertex.clone().normalize().multiplyScalar(noise * noiseAmplitude);
+
+      // Apply displacement
+      vertex.add(displacement);
+
+      // Update buffer attribute
+      positionAttribute.setXYZ(i, vertex.x, vertex.y, vertex.z);
+  }
+  sphereGeo.computeVertexNormals(); // Recalculate normals after displacement
+  // --- End Terrain Variation ---
+
+  const sphereMat = new THREE.MeshLambertMaterial({ color: 0x228B22 }); // Forest Green
   const planet = new THREE.Mesh(sphereGeo, sphereMat);
   planet.receiveShadow = true;
   scene.add(planet);
-  collidables.push(planet);
+  collidables.push(planet); // Add planet for potential collision later
 
-  // Helper: place object at dir * (R + offset), aligned to dir
-  function placeOnSphere(mesh, dir, offset=0) {
-    mesh.position.copy(dir.clone().multiplyScalar(R + offset));
-    // Align up vector
+  // Improved Helper: place object correctly on terrain
+  function placeOnSphere(mesh, dir, heightOffset=0) {
+    // Calculate actual terrain height at this point
+    const terrainHeight = getTerrainHeight(dir, R);
+    
+    // Position mesh at correct height (radius + terrain + object offset)
+    const totalHeight = R + terrainHeight + heightOffset;
+    mesh.position.copy(dir.clone().multiplyScalar(totalHeight));
+    
+    // Align up vector to be perpendicular to sphere at this point
     mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir);
+    
+    // Add to scene
     scene.add(mesh);
-    collidables.push(mesh);
+    
+    // Safely determine collision radius based on object type
+    let radius = 1.0; // Default fallback radius
+    
+    if (mesh instanceof THREE.Mesh && mesh.geometry && mesh.geometry.boundingSphere) {
+      // For simple meshes with a geometry
+      radius = mesh.geometry.boundingSphere.radius;
+    } else if (mesh instanceof THREE.Group) {
+      // For groups, use a reasonable approximation based on the object's purpose
+      if (mesh.children.length > 0) {
+        // Use the largest dimension based on the object's scale
+        radius = Math.max(
+          Math.abs(mesh.scale.x || 1), 
+          Math.abs(mesh.scale.y || 1), 
+          Math.abs(mesh.scale.z || 1)
+        ) * 2; // Scale up to be safe
+      }
+      
+      // Special case for known objects
+      if (heightOffset > 3) {
+        // This is likely a tree
+        radius = 2; // Trees have a radius of about 2 units
+      } else if (heightOffset === 0 && mesh.children.length > 1) {
+        // This is likely the cabin
+        radius = 4; // Cabin has a radius of about 4 units
+      }
+    }
+    
+    // Add to collidables with corrected radius
+    collidables.push({
+      mesh: mesh,
+      position: mesh.position.clone(),
+      radius: radius,
+      direction: dir.clone(),
+      heightOffset: heightOffset,
+      baseRadius: totalHeight
+    });
   }
 
   // --- Trees ---

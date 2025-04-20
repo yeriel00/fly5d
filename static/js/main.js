@@ -1,83 +1,104 @@
-// Main controller for sphere world walker
+// Main controller for sphere world walker with character
 
-// WebGL setup
+// Import Three.js and our custom controls
+import * as THREE from 'three';
+import SphereControls from './SphereControls.js';
+import { initEnvironment, collidables } from './world_objects.js';
+
+// --- Constants ---
+const R = 50; // Sphere radius
+
+// --- Terrain Height Function ---
+const TERRAIN_FREQ = 5.0;
+const TERRAIN_AMP = 1.5;
+
+function getTerrainHeight(normPos) {
+  const pos = normPos.clone().multiplyScalar(R);
+  const noise = Math.sin(pos.x * TERRAIN_FREQ / R) * 
+                Math.sin(pos.y * TERRAIN_FREQ / R) * 
+                Math.cos(pos.z * TERRAIN_FREQ / R);
+                
+  return noise * TERRAIN_AMP;
+}
+
+// Add a debug function to main.js
+function debug(info) {
+  console.log(`[MAIN] ${info}`);
+}
+
+// --- Setup WebGL Renderer & Scene ---
 const canvas = document.getElementById('c');
+if (!canvas) {
+    console.error("ERROR: Canvas element with ID 'c' not found!");
+}
+
 const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
 const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87CEEB); // Sky Blue
 
-// Movement on sphere
-const R = 50, eyeH = 1.6;
-// Start on the “equator” instead of north‐pole:
-let camNorm = new THREE.Vector3(0, 0, 1);               // Unit surface normal
-let camPos  = camNorm.clone().multiplyScalar(R + eyeH);
-let yaw=0, pitch=0;
-const keys = {};
+// --- Resize Handler ---
+function onWindowResize() {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  renderer.setSize(w, h);
+  
+  // Update camera aspect if controls are initialized
+  if (controls && controls.camera) {
+    controls.camera.aspect = w / h;
+    controls.camera.updateProjectionMatrix();
+  }
+}
 
-// Perspective camera
-const camera = new THREE.PerspectiveCamera(60,1,0.1,2000);
-window.addEventListener('resize',() => {
-  const w=window.innerWidth, h=window.innerHeight;
-  renderer.setSize(w,h);
-  camera.aspect = w/h;
-  camera.updateProjectionMatrix();
-});
-window.dispatchEvent(new Event('resize'));
+window.addEventListener('resize', onWindowResize);
 
-// Lights
-scene.add(new THREE.AmbientLight(0xffffff,0.6));
-const dl = new THREE.DirectionalLight(0xffffff,0.6);
-dl.position.set(5,10,5);
+// --- Lighting ---
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+const dl = new THREE.DirectionalLight(0xffffff, 0.6);
+dl.position.set(5, 10, 5);
 scene.add(dl);
 
-// Build world
-import { initEnvironment, collidables } from './world_objects.js';
-initEnvironment(scene, 'medium');  // creates sphere + trees + fence + cabin, etc.
+// --- Build World ---
+debug("Building world...");
+initEnvironment(scene, 'medium');
+debug(`World built with ${collidables.length} collidable objects`);
 
-// Input
-window.addEventListener('keydown', e=> keys[e.key.toLowerCase()]=true);
-window.addEventListener('keyup',   e=> keys[e.key.toLowerCase()]=false);
-
-// Reset on Space
-window.addEventListener('keydown', e=>{
-  if(e.key===' ') {
-    camNorm.set(0,1,0);
-    camPos = camNorm.clone().multiplyScalar(R + eyeH);
-    yaw = pitch = 0;
+// --- Initialize Controls ---
+debug("Initializing controls...");
+const controls = new SphereControls(
+  new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000),
+  canvas,
+  {
+    sphereRadius: R,
+    getTerrainHeight: getTerrainHeight,
+    moveSpeed: 0.5,
+    lookSpeed: 0.002,
+    jumpStrength: 0.3,
+    gravity: -0.02,
+    eyeHeight: 1.6,
+    createPlayerBody: true,
+    playerRadius: 0.6, 
+    collidables: collidables // Pass the actual collidables array, not an empty array
   }
-});
+);
 
-// Animation
+// Add controls object to scene
+scene.add(controls.getObject());
+
+// Trigger initial resize
+onWindowResize();
+
+// --- Animation Loop ---
+const clock = new THREE.Clock();
+
 function animate() {
   requestAnimationFrame(animate);
-
-  // Look control
-  if(keys['arrowleft'])  yaw   -= 0.02;
-  if(keys['arrowright']) yaw   += 0.02;
-  if(keys['arrowup'])    pitch = Math.min(pitch+0.02, Math.PI/2-0.01);
-  if(keys['arrowdown'])  pitch = Math.max(pitch-0.02,-Math.PI/2+0.01);
-
-  // Basis
-  const forward = new THREE.Vector3(
-    Math.sin(yaw)*Math.cos(pitch),
-    Math.sin(pitch),
-    -Math.cos(yaw)*Math.cos(pitch)
-  ).normalize();
-  const right = new THREE.Vector3().crossVectors(forward,new THREE.Vector3(0,1,0)).normalize();
-
-  // Move
-  if(keys['w']) camNorm.addScaledVector(forward,0.005);
-  if(keys['s']) camNorm.addScaledVector(forward,-0.005);
-  if(keys['a']) camNorm.addScaledVector(right,-0.005);
-  if(keys['d']) camNorm.addScaledVector(right,0.005);
-  camNorm.normalize();
-  camPos = camNorm.clone().multiplyScalar(R + eyeH);
-
-  // Update camera position & orientation:
-  camera.position.copy(camPos);
-  camera.up.copy(camNorm);
-  // Look out along the forward vector, not back at the center:
-  camera.lookAt(camPos.clone().add(forward));
-
-  renderer.render(scene, camera);
+  
+  // Update controls with delta time
+  controls.update(clock.getDelta());
+  
+  // Render scene
+  renderer.render(scene, controls.camera);
 }
+
+debug("Starting animation loop");
 animate();
