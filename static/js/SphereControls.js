@@ -11,6 +11,8 @@ export default class SphereControls {
     this.moveSpeed = options.moveSpeed || 0.5;
     this.lookSpeed = options.lookSpeed || 0.002;
     this.pitchLimit = Math.PI / 2 - 0.1;
+    this.collidables = options.collidables || [];
+    this.playerRadius = options.playerRadius || 1.0;
 
     // build yaw->pitch->camera hierarchy
     this.yawObject = new THREE.Object3D();
@@ -114,10 +116,54 @@ export default class SphereControls {
       const np = pos.clone().add(mv);
       const nDir = np.clone().normalize();
       const h = this.getTerrainHeight(nDir);
-      this.yawObject.position.copy(nDir.multiplyScalar(this.radius + h));
+      const finalPos = nDir.multiplyScalar(this.radius + h);
+
+      // Only check specific objects, NOT the ground/planet
+      let collide = false;
       
-      // keep upright
-      this.yawObject.up.copy(nDir);
+      // Filter to only include actual obstacles with reasonable collision radius
+      const validCollidables = this.collidables.filter((obj, index) => {
+        // Skip first item (planet) and water
+        if (index === 0) return false;
+        if (obj.isWater) return false;
+        
+        // Must have direction and position props
+        if (!obj || !obj.direction || !obj.position) return false;
+        
+        // Skip very small objects (reduce collision count)
+        if (obj.radius && obj.radius < 0.5) return false;
+        
+        return true;
+      });
+      
+      // Check with a smaller threshold radius to allow easier movement
+      for (const obj of validCollidables) {
+        const objDir = obj.direction;
+        const posDir = finalPos.clone().normalize();
+        
+        // Calculate distance
+        const dot = posDir.dot(objDir);
+        const angle = Math.acos(Math.min(Math.max(dot, -1), 1));
+        const surfaceDist = angle * this.radius;
+        
+        // Use a MUCH smaller collision threshold - make large objects navigable
+        const objectRadius = obj.radius || 1.0;
+        const threshold = objectRadius * 0.5 + this.playerRadius * 0.25;
+        
+        if (surfaceDist < threshold) {
+          collide = true;
+          console.log(`Collision with ${obj.mesh.constructor.name}: dist=${surfaceDist.toFixed(2)}, threshold=${threshold.toFixed(2)}`);
+          break;
+        }
+      }
+      
+      // Only move if there's no collision
+      if (!collide) {
+        this.yawObject.position.copy(finalPos);
+        this.yawObject.up.copy(finalPos.clone().normalize());
+      } else {
+        console.log("Movement blocked by collision");
+      }
     }
 
     return true;
