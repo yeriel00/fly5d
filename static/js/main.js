@@ -7,7 +7,8 @@ const scene = new THREE.Scene();
 
 // Movement on sphere
 const R = 50, eyeH = 1.6;
-let camNorm = new THREE.Vector3(0,1,0);
+// Start on the “equator” instead of north‐pole:
+let camNorm = new THREE.Vector3(0, 0, 1);               // Unit surface normal
 let camPos  = camNorm.clone().multiplyScalar(R + eyeH);
 let yaw=0, pitch=0;
 const keys = {};
@@ -30,7 +31,7 @@ scene.add(dl);
 
 // Build world
 import { initEnvironment, collidables } from './world_objects.js';
-initEnvironment(scene,'medium');
+initEnvironment(scene, 'medium');  // creates sphere + trees + fence + cabin, etc.
 
 // Input
 window.addEventListener('keydown', e=> keys[e.key.toLowerCase()]=true);
@@ -71,11 +72,12 @@ function animate() {
   camNorm.normalize();
   camPos = camNorm.clone().multiplyScalar(R + eyeH);
 
-  // Update camera
+  // Update camera position & orientation:
   camera.position.copy(camPos);
   camera.up.copy(camNorm);
-  camera.lookAt(camNorm.clone().multiplyScalar(R));
+  // Look out along the forward vector, not back at the center:
+  camera.lookAt(camPos.clone().add(forward));
 
-  renderer.render(scene,camera);
+  renderer.render(scene, camera);
 }
 animate();
