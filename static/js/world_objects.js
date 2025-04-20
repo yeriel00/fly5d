@@ -19,46 +19,102 @@ function getTerrainHeight(pos, R) {
 }
 
 export function initEnvironment(scene, quality) {
-  const R = 50; // Planet radius
-  const seg = quality === 'high' ? 64 : quality === 'medium' ? 32 : 16; // Increased segments for smoother terrain
+  const R = 100;
+  const seg = quality === 'high' ? 64 : quality === 'medium' ? 32 : 16;
 
-  // --- Planet Sphere ---
+  // Define lake parameters globally for consistency
+  const lakeCenter = new THREE.Vector3(0.7, -0.2, 0.7).normalize();
+  const lakeRadius = 0.15;      // Angular radius on the unit sphere
+  const lakeDepth = 5.0;        // How deep to recess the lake
+  const lakeRimWidth = 0.05;    // Smooth transition at lake edges
+  const waterOffset = 0.5;      // How far below terrain rim to place water
+
+  // --- Create the planet with lake depression ---
   const sphereGeo = new THREE.SphereGeometry(R, seg, seg);
-
-  // --- Add Terrain Variation ---
-  const positionAttribute = sphereGeo.getAttribute('position');
+  const posAttr = sphereGeo.getAttribute('position');
   const vertex = new THREE.Vector3();
-  const noiseFrequency = 5.0; // How many bumps
-  const noiseAmplitude = 1.5; // How high the bumps are
-
-  for (let i = 0; i < positionAttribute.count; i++) {
-      vertex.fromBufferAttribute(positionAttribute, i); // Get vertex position
-
-      // Simple noise based on vertex position (using sine waves)
-      let noise = Math.sin(vertex.x * noiseFrequency / R) *
-                  Math.sin(vertex.y * noiseFrequency / R) *
-                  Math.cos(vertex.z * noiseFrequency / R);
-
-      // Calculate displacement vector (normalized vertex direction)
-      const displacement = vertex.clone().normalize().multiplyScalar(noise * noiseAmplitude);
-
-      // Apply displacement
-      vertex.add(displacement);
-
-      // Update buffer attribute
-      positionAttribute.setXYZ(i, vertex.x, vertex.y, vertex.z);
+  
+  for (let i = 0; i < posAttr.count; i++) {
+    vertex.fromBufferAttribute(posAttr, i);
+    const dir = vertex.clone().normalize();
+    
+    // Standard terrain noise
+    const noiseFreq = 5.0, noiseAmp = 2.5;
+    let noise = Math.sin(dir.x * noiseFreq) * 
+                Math.sin(dir.y * noiseFreq) * 
+                Math.cos(dir.z * noiseFreq);
+    
+    // Calculate distance to lake center (angular)
+    const dotToLake = dir.dot(lakeCenter);
+    const angleToLake = Math.acos(Math.min(Math.max(dotToLake, -1), 1));
+    
+    // Create the lake depression
+    if (angleToLake < lakeRadius) {
+      // Inside lake - full depression
+      noise -= lakeDepth;
+    } 
+    else if (angleToLake < lakeRadius + lakeRimWidth) {
+      // Lake rim - smooth transition from depression to normal terrain
+      const rimT = (angleToLake - lakeRadius) / lakeRimWidth;
+      const smoothStep = 3*Math.pow(rimT, 2) - 2*Math.pow(rimT, 3); // Smooth interpolation
+      noise -= lakeDepth * (1.0 - smoothStep);
+    }
+    
+    // Apply displacement along normal vector
+    vertex.copy(dir.multiplyScalar(R + noise * noiseAmp));
+    posAttr.setXYZ(i, vertex.x, vertex.y, vertex.z);
   }
-  sphereGeo.computeVertexNormals(); // Recalculate normals after displacement
-  // --- End Terrain Variation ---
-
-  const sphereMat = new THREE.MeshLambertMaterial({ color: 0x228B22 }); // Forest Green
-  const planet = new THREE.Mesh(sphereGeo, sphereMat);
+  sphereGeo.computeVertexNormals();
+  
+  // Create terrain mesh
+  const terrainMat = new THREE.MeshLambertMaterial({ color: 0x228B22 });
+  const planet = new THREE.Mesh(sphereGeo, terrainMat);
   planet.receiveShadow = true;
   scene.add(planet);
-  collidables.push(planet); // Add planet for potential collision later
+  
+  // --- Create water lake disk flush in depression ---
+  const waterMat = new THREE.MeshLambertMaterial({
+    color: 0x1E90FF,
+    transparent: true,
+    opacity: 0.75
+  });
 
-  // Improved Helper: place object correctly on terrain
+  // Compute center terrain height and depression
+  const centerTerrain = getTerrainHeight(lakeCenter, R);
+  const depression = centerTerrain - lakeDepth;
+  const lakeRadiusWorld = (R + depression) * Math.sin(lakeRadius);
+
+  // Build disk geometry
+  const waterDiskGeo = new THREE.CircleGeometry(lakeRadiusWorld, 64);
+  const waterDisk = new THREE.Mesh(waterDiskGeo, waterMat);
+
+  // Position disk at exact depressed surface
+  waterDisk.position.copy(
+    lakeCenter.clone().multiplyScalar(R + depression)
+  );
+
+  // Orient to face outward
+  waterDisk.lookAt(0,0,0);
+  waterDisk.rotateY(Math.PI);
+
+  scene.add(waterDisk);
+  collidables.push({
+    mesh: waterDisk,
+    position: waterDisk.position.clone(),
+    radius: lakeRadiusWorld,
+    direction: lakeCenter.clone(),
+    isWater: true
+  });
+  
+  // --- Place objects helper function ---
   function placeOnSphere(mesh, dir, heightOffset = 0, sinkDepth = 0) {
+    // Avoid placing objects in the lake
+    const dotToLake = dir.dot(lakeCenter);
+    const angleToLake = Math.acos(Math.min(Math.max(dotToLake, -1), 1));
+    
+    // Skip if trying to place in the lake
+    if (angleToLake < lakeRadius * 1.2) return;
+    
     // compute terrain + base radius, then sink
     const terrainHeight = getTerrainHeight(dir, R);
     const baseRadius = R + terrainHeight + heightOffset - sinkDepth;
@@ -103,20 +159,34 @@ export function initEnvironment(scene, quality) {
     });
   }
 
-  // --- Trees ---
+  // --- Trees (taller, but lowered into ground) ---
   const treeSeg = quality==='high'?12:quality==='medium'?6:3;
-  for (let i=0; i<20; i++) {
+  // define offsets and sink depths
+  const trunkHeight = 10;   // half the cylinder height
+  const trunkSink  = 12;    // push trunk 2 units into ground
+  const foliageHeight = 10; // half the cone height
+  const foliageSink  = 8;// push foliage 1.5 units into ground
+
+  for (let i = 0; i < 20; i++) {
     const dir = new THREE.Vector3().randomDirection();
+    // skip lake region
+    const dotToLake = dir.dot(lakeCenter);
+    const angleToLake = Math.acos(Math.max(-1, Math.min(1, dotToLake)));
+    if (angleToLake < lakeRadius * 1.2) continue;
+
+    // trunk
     const trunk = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.5,0.5,3,treeSeg),
-      new THREE.MeshLambertMaterial({color:0x8B4513})
+      new THREE.CylinderGeometry(0.6, 0.8, trunkHeight * 2, treeSeg),
+      new THREE.MeshLambertMaterial({ color: 0x8B4513 })
     );
-    placeOnSphere(trunk, dir, /*height*/1.5, /*sink*/3);
+    placeOnSphere(trunk, dir, trunkHeight, trunkSink);
+
+    // foliage
     const foliage = new THREE.Mesh(
-      new THREE.ConeGeometry(2,4,treeSeg),
-      new THREE.MeshLambertMaterial({color:0x228B22})
+      new THREE.ConeGeometry(3, foliageHeight * 2, treeSeg),
+      new THREE.MeshLambertMaterial({ color: 0x228B22 })
     );
-    placeOnSphere(foliage, dir, /*height*/4.5, /*sink*/3);
+    placeOnSphere(foliage, dir, trunkHeight + foliageHeight, foliageSink);
   }
 
   // --- Fence (band around equator) ---
@@ -139,19 +209,6 @@ export function initEnvironment(scene, quality) {
       new THREE.MeshLambertMaterial({color:0xA0522D})
     );
     placeOnSphere(plank, dir, 1);
-  }
-
-  // --- Stream below bridge (a curved band) ---
-  const streamMat = new THREE.MeshLambertMaterial({color:0x1E90FF});
-  for (let j=-1; j<=1; j++) {
-    const angle = j*0.2;
-    const dir = new THREE.Vector3(Math.sin(angle),-0.1,Math.cos(angle)).normalize();
-    const segMesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(4,1),
-      streamMat
-    );
-    segMesh.rotation.x = Math.PI/2;
-    placeOnSphere(segMesh, dir, 0);
   }
 
   // --- Cabin ---

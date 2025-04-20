@@ -19,11 +19,20 @@ export default class SphereControls {
     this.pitchObject.add(camera);
     camera.position.set(0, options.eyeHeight||1.6, 0);
 
-    // start on equator facing global -Z
-    const startPos = new THREE.Vector3(0, 0, this.radius);
+    // Allow for custom start position direction
+    const startDir = options.startPosition || new THREE.Vector3(0, 0, 1).normalize();
+    
+    // Calculate terrain height at start position
+    const startTerrainHeight = this.getTerrainHeight(startDir);
+    
+    // Calculate start position with proper height above terrain
+    const startPos = startDir.clone().multiplyScalar(this.radius + startTerrainHeight + 5); // +5 units above terrain
+    
+    // Initialize position and orientation
     this.yawObject.position.copy(startPos);
     this.yawObject.up.copy(startPos.clone().normalize());
-    // aim yawObject so its local forward is tangent(-Z)
+    
+    // Aim along tangent
     const forward0 = new THREE.Vector3(0,0,-1)
       .projectOnPlane(startPos.clone().normalize())
       .normalize();
@@ -112,6 +121,25 @@ export default class SphereControls {
     }
 
     return true;
+  }
+
+  reset() {
+    // Reset to a safe height above origin point
+    const originDir = new THREE.Vector3(0, 0, 1).normalize();
+    const terrainHeight = this.getTerrainHeight(originDir);
+    const safePos = originDir.multiplyScalar(this.radius + terrainHeight + 5);
+    
+    this.yawObject.position.copy(safePos);
+    this.yawObject.up.copy(safePos.clone().normalize());
+    this.pitch = 0;
+    this.pitchObject.rotation.x = 0;
+    
+    // Look along tangent
+    const resetForward = new THREE.Vector3(0,0,-1)
+      .projectOnPlane(this.yawObject.up)
+      .normalize();
+    const resetTarget = this.yawObject.position.clone().add(resetForward);
+    this.yawObject.lookAt(resetTarget);
   }
 
   dispose() {
