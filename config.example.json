@@ -1,0 +1,12 @@
+{
+  "use_tpu": false,
+  "render_quality": "high",
+  "max_ray_steps": 100,
+  "field_of_view": 45,
+  "resolution_scale": 1.0,
+  "dim_step_size": 0.02,
+  "move_speed": 0.1,
+  "look_speed": 0.02,
+  "glow_factor": 2.0,
+  "glow_intensity": 0.8
+}

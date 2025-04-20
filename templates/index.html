@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>5D Hyperspace Fly-Through</title>
+  <link rel="stylesheet" href="/static/css/main.css">
+  <style>body{margin:0;overflow:hidden;}canvas{display:block;}</style>
+</head>
+<body>
+<div id="container">
+  <canvas id="c"></canvas>
+  <div id="info">
+    <div class="controls-info">WASD: Move | Arrows: Look | Q/E: 4D | R/F: 5D | Space: Reset</div>
+    <div id="dimensions">W: <span id="w-dim">0.0</span>, V: <span id="v-dim">0.0</span></div>
+    <div id="position">X: <span id="x-pos">0.0</span>, Y: <span id="y-pos">0.0</span>, Z: <span id="z-pos">0.0</span></div>
+    <div id="fps">FPS: <span id="fps-counter">0</span></div>
+  </div>
+</div>
+
+<!-- Three.js from CDN -->
+<script src="https://unpkg.com/three@0.152.2/build/three.min.js"></script>
+
+<script id="fragShader" type="x-shader/x-fragment">
+precision highp float;
+uniform vec2 u_resolution;
+uniform float u_time;
+uniform vec2 u_dim;            // w, v (4th & 5th dims)
+uniform vec3 u_cameraPos;
+uniform vec3 u_cameraForward;
+uniform vec3 u_cameraRight;
+uniform vec3 u_cameraUp;
+uniform float u_fov;
+uniform int u_maxSteps;
+uniform float u_maxDist;
+uniform float u_surfDist;
+uniform float u_glowFactor;
+uniform float u_glowIntensity;
+varying vec2 v_uv;
+
+// Ray‑marching parameters from config
+const float SURF_DIST = 0.001;
+
+// 5D Hyperspace SDF inspired by Interstellar tesseract scene
+float distanceEstimator(vec3 p) {
+    // Create tesseract-like 5D structure
+    vec3 q = p;
+    
+    // Apply 4th & 5th dimensional warping
+    q.x = mod(q.x + u_dim.x*0.5, u_dim.x) - u_dim.x*0.5;
+    q.z = mod(q.z + u_dim.y*0.5, u_dim.y) - u_dim.y*0.5;
+    
+    // Create scaffolding structure
+    float gridScale = 0.1;
+    vec3 gridP = abs(mod(p, gridScale) - 0.5 * gridScale);
+    float grid = min(min(gridP.x, gridP.y), gridP.z) - 0.005;
+    
+    // Dynamically sized spheres based on dimensions
+    float sphereScale = sin(u_time * 0.2) * 0.1 + 0.3;
+    float sphereDist = length(q) - sphereScale;
+    
+    // Combine grid and spheres
+    float w1 = abs(sin(u_dim.x * 1.5));
+    float v1 = abs(cos(u_dim.y * 1.2));
+    float intensity = (w1 + v1) * 0.5;
+    
+    // Dynamic blend between the two structures
+    float blend = mix(sphereDist, grid, clamp(intensity * 2.0, 0.1, 0.9));
+    
+    // Add some hyperspace displacement
+    float dispFactor = 0.1 * sin(u_time * 0.1);
+    float displacement = sin(p.x * 4.0 + u_dim.x) * sin(p.y * 4.0) * sin(p.z * 4.0 + u_dim.y) * dispFactor;
+    
+    return blend + displacement;
+}
+
+// Approximate normal via gradient
+vec3 calcNormal(vec3 p) {
+    float e = 0.001;
+    float dx = distanceEstimator(p + vec3(e,0,0)) - distanceEstimator(p - vec3(e,0,0));
+    float dy = distanceEstimator(p + vec3(0,e,0)) - distanceEstimator(p - vec3(0,e,0));
+    float dz = distanceEstimator(p + vec3(0,0,e)) - distanceEstimator(p - vec3(0,0,e));
+    return normalize(vec3(dx, dy, dz));
+}
+
+// Generate ray direction from camera basis
+vec3 getRayDir(vec2 uv) {
+    vec2 p = (uv - 0.5) * 2.0;
+    p.x *= u_resolution.x / u_resolution.y;
+    float fov = radians(u_fov); // Dynamic FOV
+    float a = tan(fov * 0.5);
+    return normalize(u_cameraForward + p.x*a*u_cameraRight + p.y*a*u_cameraUp);
+}
+
+// Interstellar-inspired glow effect
+vec3 hyperGlow(float dist, vec3 rayDir) {
+    // Blue-gold ethereal glow inspired by tesseract scene
+    vec3 glow1 = vec3(0.1, 0.4, 0.8) * u_glowIntensity; // Blue
+    vec3 glow2 = vec3(0.8, 0.7, 0.3) * u_glowIntensity; // Gold
+    
+    // Direction-based color mixing
+    float dirFactor = dot(rayDir, vec3(0.0, 1.0, 0.0)) * 0.5 + 0.5;
+    vec3 baseGlow = mix(glow1, glow2, dirFactor);
+    
+    // Dimensional factor
+    float dimFactor = sin(u_dim.x * 2.0) * cos(u_dim.y * 2.0) * 0.5 + 0.5;
+    baseGlow = mix(baseGlow, vec3(0.9, 0.5, 0.7) * u_glowIntensity, dimFactor); // Add purple hints
+    
+    // Distance attenuation
+    float attenuation = 1.0 / (1.0 + dist * dist * u_glowFactor * 0.01);
+    
+    return baseGlow * attenuation;
+}
+
+void main() {
+    vec3 ro = u_cameraPos;
+    vec3 rd = getRayDir(v_uv);
+    float t = 0.0;
+    float dist;
+    
+    // Ray marching loop
+    for(int i = 0; i < 500; i++) { // Hard limit for compatibility
+        if(i >= u_maxSteps) break;
+        
+        vec3 pos = ro + rd * t;
+        dist = distanceEstimator(pos);
+        
+        if(dist < u_surfDist || t > u_maxDist) break;
+        t += dist;
+    }
+    
+    // Start with background color
+    vec3 col = vec3(0.02, 0.02, 0.05); // Dark space background
+    
+    // Calculate glow regardless of hit
+    col += hyperGlow(t, rd);
+    
+    if(t < u_maxDist) {
+        // We hit something
+        vec3 p = ro + rd * t;
+        vec3 N = calcNormal(p);
+        
+        // Hyperspace lighting
+        vec3 light1 = normalize(vec3(1.0, 1.0, -1.0));
+        vec3 light2 = normalize(vec3(-1.0, 0.5, 0.5));
+        
+        // Dimensional-based material coloring
+        vec3 baseColor = vec3(0.5);
+        float w_factor = sin(u_dim.x * 2.0) * 0.5 + 0.5;
+        float v_factor = cos(u_dim.y * 2.0) * 0.5 + 0.5;
+        
+        // Create a spectrum of colors based on dimensions
+        vec3 w_color = mix(vec3(0.2, 0.4, 0.8), vec3(0.8, 0.2, 0.5), w_factor);
+        vec3 v_color = mix(vec3(0.1, 0.7, 0.3), vec3(0.9, 0.6, 0.1), v_factor);
+        baseColor = mix(w_color, v_color, 0.5);
+        
+        // Apply lighting
+        float diff1 = max(dot(N, light1), 0.0);
+        float diff2 = max(dot(N, light2), 0.0);
+        float ambient = 0.2;
+        
+        // Reflective highlights
+        float specular = pow(max(dot(reflect(-light1, N), -rd), 0.0), 32.0) * 0.5;
+        
+        // Final shading
+        col = baseColor * ((diff1 + diff2) * 0.6 + ambient) + vec3(1.0) * specular;
+        
+        // Add dimensional iridescence
+        col += baseColor * 0.2 * sin(p.x * 10.0 + u_time + u_dim.x) * 
+                           sin(p.y * 10.0 + u_time * 0.7) * 
+                           sin(p.z * 10.0 + u_dim.y);
+    }
+    
+    // Tone mapping and gamma correction
+    col = pow(col / (1.0 + col), vec3(0.4545)); // ACES-inspired curve
+    
+    gl_FragColor = vec4(col, 1.0);
+}
+</script>
+
+<script src="/static/js/main.js"></script>
+</body>
+</html>
