@@ -5,24 +5,22 @@ const canvas = document.getElementById('c');
 const renderer = new THREE.WebGLRenderer({canvas, antialias: true});
 const scene = new THREE.Scene();
 
-// Define initial camera / movement state first:
-let camPos = new THREE.Vector3(0, 1.6, 5); // Start slightly above ground
-let yaw = 0, pitch = 0;
-const keys = {};
+// Movement state
+const R = 50, eyeH = 1.6;
+let camNorm = new THREE.Vector3(0,1,0); // Unit surface normal
+let yaw=0,pitch=0;
+const keys={};
 
-// --- Restore Orthographic Camera ---
-const aspect = window.innerWidth / window.innerHeight;
-const frustumSize = 15; // Adjust this value based on world size and desired zoom
-const camera = new THREE.OrthographicCamera(
-    frustumSize * aspect / -2,
-    frustumSize * aspect / 2,
-    frustumSize / 2,
-    frustumSize / -2,
-    0.1,
-    1000
-);
-camera.position.copy(camPos);
-scene.add(camera);
+// Perspective camera
+const camera = new THREE.PerspectiveCamera(60,1,0.1,2000);
+function resize() {
+  const w=window.innerWidth, h=window.innerHeight;
+  renderer.setSize(w,h);
+  camera.aspect = w/h;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize',resize);
+resize();
 
 // Performance monitoring
 let lastFrameTime = 0;
