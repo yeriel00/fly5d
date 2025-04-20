@@ -58,55 +58,48 @@ export function initEnvironment(scene, quality) {
   collidables.push(planet); // Add planet for potential collision later
 
   // Improved Helper: place object correctly on terrain
-  function placeOnSphere(mesh, dir, heightOffset=0) {
-    // Calculate actual terrain height at this point
+  function placeOnSphere(mesh, dir, heightOffset = 0, sinkDepth = 0) {
+    // compute terrain + base radius, then sink
     const terrainHeight = getTerrainHeight(dir, R);
-    
-    // Position mesh at correct height (radius + terrain + object offset)
-    const totalHeight = R + terrainHeight + heightOffset;
-    mesh.position.copy(dir.clone().multiplyScalar(totalHeight));
-    
-    // Align up vector to be perpendicular to sphere at this point
+    const baseRadius = R + terrainHeight + heightOffset - sinkDepth;
+
+    // position and orient
+    mesh.position.copy(dir.clone().multiplyScalar(baseRadius));
     mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir);
-    
-    // Add to scene
+
+    // ground mesh bottom
+    let minY;
+    if (mesh.geometry) {
+      mesh.geometry.computeBoundingBox();
+      minY = mesh.geometry.boundingBox.min.y;
+    } else {
+      const box = new THREE.Box3().setFromObject(mesh);
+      minY = box.min.y;
+    }
+    mesh.position.add(dir.clone().multiplyScalar(-minY));
+
     scene.add(mesh);
-    
-    // Safely determine collision radius based on object type
-    let radius = 1.0; // Default fallback radius
-    
-    if (mesh instanceof THREE.Mesh && mesh.geometry && mesh.geometry.boundingSphere) {
-      // For simple meshes with a geometry
+
+    // collision radius
+    let radius = 1.0;
+    if (mesh instanceof THREE.Mesh && mesh.geometry.boundingSphere) {
       radius = mesh.geometry.boundingSphere.radius;
     } else if (mesh instanceof THREE.Group) {
-      // For groups, use a reasonable approximation based on the object's purpose
-      if (mesh.children.length > 0) {
-        // Use the largest dimension based on the object's scale
-        radius = Math.max(
-          Math.abs(mesh.scale.x || 1), 
-          Math.abs(mesh.scale.y || 1), 
-          Math.abs(mesh.scale.z || 1)
-        ) * 2; // Scale up to be safe
-      }
-      
-      // Special case for known objects
-      if (heightOffset > 3) {
-        // This is likely a tree
-        radius = 2; // Trees have a radius of about 2 units
-      } else if (heightOffset === 0 && mesh.children.length > 1) {
-        // This is likely the cabin
-        radius = 4; // Cabin has a radius of about 4 units
-      }
+      radius = Math.max(
+        mesh.scale.x, mesh.scale.y, mesh.scale.z
+      ) * 2;
+      // special tree/cabin cases
+      if (heightOffset > 3) radius = 2;
+      else if (heightOffset === 0 && mesh.children.length > 1) radius = 4;
     }
-    
-    // Add to collidables with corrected radius
+
     collidables.push({
-      mesh: mesh,
+      mesh,
       position: mesh.position.clone(),
-      radius: radius,
+      radius,
       direction: dir.clone(),
-      heightOffset: heightOffset,
-      baseRadius: totalHeight
+      heightOffset,
+      baseRadius
     });
   }
 
@@ -118,12 +111,12 @@ export function initEnvironment(scene, quality) {
       new THREE.CylinderGeometry(0.5,0.5,3,treeSeg),
       new THREE.MeshLambertMaterial({color:0x8B4513})
     );
-    placeOnSphere(trunk, dir, 1.5);
+    placeOnSphere(trunk, dir, /*height*/1.5, /*sink*/3);
     const foliage = new THREE.Mesh(
       new THREE.ConeGeometry(2,4,treeSeg),
       new THREE.MeshLambertMaterial({color:0x228B22})
     );
-    placeOnSphere(foliage, dir, 4.5);
+    placeOnSphere(foliage, dir, /*height*/4.5, /*sink*/3);
   }
 
   // --- Fence (band around equator) ---
@@ -133,7 +126,7 @@ export function initEnvironment(scene, quality) {
     const theta = a/36 * Math.PI*2;
     const dir = new THREE.Vector3(Math.cos(theta),0,Math.sin(theta));
     const post = new THREE.Mesh(postGeo, postMat);
-    placeOnSphere(post, dir, 1);
+    placeOnSphere(post, dir, -1);
   }
 
   // --- Bridge (small arc) ---
@@ -145,7 +138,7 @@ export function initEnvironment(scene, quality) {
       new THREE.BoxGeometry(4,0.3,2),
       new THREE.MeshLambertMaterial({color:0xA0522D})
     );
-    placeOnSphere(plank, dir, 1.5);
+    placeOnSphere(plank, dir, 1);
   }
 
   // --- Stream below bridge (a curved band) ---
@@ -158,7 +151,7 @@ export function initEnvironment(scene, quality) {
       streamMat
     );
     segMesh.rotation.x = Math.PI/2;
-    placeOnSphere(segMesh, dir, 0.5);
+    placeOnSphere(segMesh, dir, 0);
   }
 
   // --- Cabin ---
@@ -176,5 +169,5 @@ export function initEnvironment(scene, quality) {
   roof.position.y = 4;
   cabin.add(roof);
   const dirCab = new THREE.Vector3(1,0,1).normalize();
-  placeOnSphere(cabin, dirCab, 0);
+  placeOnSphere(cabin, dirCab, -6);
 }
