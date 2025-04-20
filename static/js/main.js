@@ -99,22 +99,19 @@ const dirLight = new THREE.DirectionalLight(0xffffff, 1.0); // boost directional
 dirLight.position.set(5, 10, 7.5);
 scene.add(dirLight);
 
-// Handle window resize - update orthographic camera
+// Handle window resize – update renderer and perspective camera
 function handleResize() {
-    const width = window.innerWidth;
+    const width  = window.innerWidth;
     const height = window.innerHeight;
     renderer.setSize(width, height);
 
-    // Update orthographic camera frustum
-    const aspect = width / height;
-    camera.left = frustumSize * aspect / -2;
-    camera.right = frustumSize * aspect / 2;
-    camera.top = frustumSize / 2;
-    camera.bottom = frustumSize / -2;
-    camera.updateProjectionMatrix(); // IMPORTANT for ortho camera resize
+    // For PerspectiveCamera, just update aspect & projection
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
 }
+
 window.addEventListener('resize', handleResize);
-handleResize(); // Initial call
+handleResize();
 
 // Key event handlers
 window.addEventListener('keydown', e => {
