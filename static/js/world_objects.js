@@ -183,7 +183,7 @@ export function initEnvironment(scene, quality) {
 
     // foliage
     const foliage = new THREE.Mesh(
-      new THREE.ConeGeometry(3, foliageHeight * 2, treeSeg),
+      new THREE.ConeGeometry(6, foliageHeight * 2, treeSeg),
       new THREE.MeshLambertMaterial({ color: 0x228B22 })
     );
     placeOnSphere(foliage, dir, trunkHeight + foliageHeight, foliageSink);
