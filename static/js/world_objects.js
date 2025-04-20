@@ -18,16 +18,17 @@ function getTerrainHeight(pos, R) {
   return noise * noiseAmplitude;
 }
 
-export function initEnvironment(scene, quality) {
-  const R = 100;
+export function initEnvironment(scene, quality, config = {}, callback) {
+  // Use provided config or defaults
+  const R = config.radius || 100;
+  const lakeDepth = config.lakeDepth || 5.0;
+  const waterOffset = config.waterOffset || 0.5;
   const seg = quality === 'high' ? 64 : quality === 'medium' ? 32 : 16;
 
   // Define lake parameters globally for consistency
   const lakeCenter = new THREE.Vector3(0.7, -0.2, 0.7).normalize();
   const lakeRadius = 0.15;      // Angular radius on the unit sphere
-  const lakeDepth = 5.0;        // How deep to recess the lake
   const lakeRimWidth = 0.05;    // Smooth transition at lake edges
-  const waterOffset = 0.5;      // How far below terrain rim to place water
 
   // --- Create the planet with lake depression ---
   const sphereGeo = new THREE.SphereGeometry(R, seg, seg);
@@ -113,7 +114,7 @@ export function initEnvironment(scene, quality) {
     const angleToLake = Math.acos(Math.min(Math.max(dotToLake, -1), 1));
     
     // Skip if trying to place in the lake
-    if (angleToLake < lakeRadius * 1.2) return;
+    if (angleToLake < lakeRadius * 1.2) return false;
     
     // compute terrain + base radius, then sink
     const terrainHeight = getTerrainHeight(dir, R);
@@ -123,18 +124,18 @@ export function initEnvironment(scene, quality) {
     mesh.position.copy(dir.clone().multiplyScalar(baseRadius));
     mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir);
 
-    // ground mesh bottom
-    let minY;
-    if (mesh.geometry) {
-      mesh.geometry.computeBoundingBox();
-      minY = mesh.geometry.boundingBox.min.y;
-    } else {
-      const box = new THREE.Box3().setFromObject(mesh);
-      minY = box.min.y;
-    }
-    mesh.position.add(dir.clone().multiplyScalar(-minY));
-
     scene.add(mesh);
+
+    // Ensure all geometries have proper normals
+    if (mesh.geometry) {
+      mesh.geometry.computeVertexNormals();
+    } else if (mesh instanceof THREE.Group) {
+      mesh.traverse(child => {
+        if (child.geometry) {
+          child.geometry.computeVertexNormals();
+        }
+      });
+    }
 
     // collision radius
     let radius = 1.0;
@@ -149,23 +150,53 @@ export function initEnvironment(scene, quality) {
       else if (heightOffset === 0 && mesh.children.length > 1) radius = 4;
     }
 
-    collidables.push({
+    // Add to collidables array with proper properties
+    const collidable = {
       mesh,
       position: mesh.position.clone(),
       radius,
       direction: dir.clone(),
       heightOffset,
       baseRadius
-    });
+    };
+    
+    // Copy userData flags if they exist
+    if (mesh.userData) {
+      if (mesh.userData.isGrass) collidable.isGrass = true;
+      // Copy any other userData properties that affect collision
+    }
+    
+    
+    // Check for grass or no-collision flags in userData
+    // Copy multiple properties for redundant detection
+    if (mesh.userData) {
+      // Direct copy of all userData properties
+      Object.assign(collidable, mesh.userData);
+      
+      // Special case for grass
+      if (mesh.userData.isGrass) {
+        collidable.isGrass = true;
+        collidable.noCollision = true;
+      }
+    }
+    
+    // Check name-based identification too
+    if (mesh.name && mesh.name.toLowerCase().includes('grass')) {
+      collidable.isGrass = true;
+      collidable.noCollision = true;
+    }
+    
+    collidables.push(collidable);
+    
+    return true;
   }
 
   // --- Trees (taller, but lowered into ground) ---
-  const treeSeg = quality==='high'?12:quality==='medium'?6:3;
-  // define offsets and sink depths
-  const trunkHeight = 10;   // half the cylinder height
-  const trunkSink  = 12;    // push trunk 2 units into ground
-  const foliageHeight = 10; // half the cone height
-  const foliageSink  = 8;// push foliage 1.5 units into ground
+  const treeSeg = quality === 'high' ? 12 : quality === 'medium' ? 6 : 3;
+  const trunkHeight = config.baseTrees?.trunkHeight || 10;
+  const trunkSink = config.baseTrees?.trunkSink || 12;
+  const foliageHeight = config.baseTrees?.foliageHeight || 10;
+  const foliageSink = config.baseTrees?.foliageSink || 8;
 
   for (let i = 0; i < 20; i++) {
     const dir = new THREE.Vector3().randomDirection();
@@ -190,23 +221,30 @@ export function initEnvironment(scene, quality) {
   }
 
   // --- Fence (band around equator) ---
-  const postGeo = new THREE.BoxGeometry(0.3,2,0.3);
-  const postMat = new THREE.MeshLambertMaterial({color:0xDEB887});
-  for (let a=0; a<36; a++) {
-    const theta = a/36 * Math.PI*2;
-    const dir = new THREE.Vector3(Math.cos(theta),0,Math.sin(theta));
-    const post = new THREE.Mesh(postGeo, postMat);
-    placeOnSphere(post, dir, -1);
+  const postCount = config.fence?.count || 36;
+  const fenceHeight = config.fence?.height || -1;
+  const fenceSink = config.fence?.sink || 0;
+  
+  for (let a = 0; a < postCount; a++) {
+    const theta = a / postCount * Math.PI * 2;
+    const dir = new THREE.Vector3(Math.cos(theta), 0, Math.sin(theta));
+    const post = new THREE.Mesh(
+      new THREE.BoxGeometry(0.3, 2, 0.3),
+      new THREE.MeshLambertMaterial({color: 0xDEB887})
+    );
+    placeOnSphere(post, dir, fenceHeight, fenceSink);
   }
 
   // --- Bridge (small arc) ---
-  // Place 3 planks along a small great‐circle arc:
-  for (let j=-1; j<=1; j++) {
-    const angle = j*0.2; // radians offset
-    const dir = new THREE.Vector3(Math.sin(angle),0,Math.cos(angle)).normalize();
+  const bridgeCount = config.bridge?.count || 3;
+  const halfBridge = Math.floor(bridgeCount / 2);
+  
+  for (let j = -halfBridge; j <= halfBridge; j++) {
+    const angle = j * 0.2; // radians offset
+    const dir = new THREE.Vector3(Math.sin(angle), 0, Math.cos(angle)).normalize();
     const plank = new THREE.Mesh(
-      new THREE.BoxGeometry(4,0.3,2),
-      new THREE.MeshLambertMaterial({color:0xA0522D})
+      new THREE.BoxGeometry(4, 0.3, 2),
+      new THREE.MeshLambertMaterial({color: 0xA0522D})
     );
     placeOnSphere(plank, dir, 1);
   }
@@ -214,17 +252,22 @@ export function initEnvironment(scene, quality) {
   // --- Cabin ---
   const cabin = new THREE.Group();
   const wall = new THREE.Mesh(
-    new THREE.BoxGeometry(5,3,5),
-    new THREE.MeshLambertMaterial({color:0xCD853F})
+    new THREE.BoxGeometry(5, 3, 5),
+    new THREE.MeshLambertMaterial({color: 0xCD853F})
   );
   wall.position.y = 1.5;
   cabin.add(wall);
   const roof = new THREE.Mesh(
-    new THREE.ConeGeometry(4,2,8),
-    new THREE.MeshLambertMaterial({color:0x8B0000})
+    new THREE.ConeGeometry(4, 2, 8),
+    new THREE.MeshLambertMaterial({color: 0x8B0000})
   );
   roof.position.y = 4;
   cabin.add(roof);
-  const dirCab = new THREE.Vector3(1,0,1).normalize();
-  placeOnSphere(cabin, dirCab, -6);
+  const dirCab = new THREE.Vector3(1, 0, 1).normalize();
+  placeOnSphere(cabin, dirCab, config.cabin?.height || -6, config.cabin?.sink || 0);
+
+  // Export the placeOnSphere function via callback if provided
+  if (callback && typeof callback === 'function') {
+    callback(placeOnSphere);
+  }
 }

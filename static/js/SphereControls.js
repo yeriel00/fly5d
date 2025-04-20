@@ -118,25 +118,19 @@ export default class SphereControls {
       const h = this.getTerrainHeight(nDir);
       const finalPos = nDir.multiplyScalar(this.radius + h);
 
-      // Only check specific objects, NOT the ground/planet
-      let collide = false;
-      
-      // Filter to only include actual obstacles with reasonable collision radius
+      // Only skip items explicitly flagged noCollision (grass)
       const validCollidables = this.collidables.filter((obj, index) => {
-        // Skip first item (planet) and water
-        if (index === 0) return false;
-        if (obj.isWater) return false;
-        
-        // Must have direction and position props
-        if (!obj || !obj.direction || !obj.position) return false;
-        
-        // Skip very small objects (reduce collision count)
-        if (obj.radius && obj.radius < 0.5) return false;
-        
-        return true;
+        if (index === 0) return false;         // planet
+        if (obj.isWater) return false;         // water
+        if (obj.noCollision) return false;     // grass or other no‐collision
+        // must have direction
+        return !!obj.direction;
       });
-      
+
+      console.log(`Checking ${validCollidables.length} objects for collision`);
+
       // Check with a smaller threshold radius to allow easier movement
+      let collide = false;
       for (const obj of validCollidables) {
         const objDir = obj.direction;
         const posDir = finalPos.clone().normalize();
