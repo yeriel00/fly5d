@@ -55,6 +55,17 @@ export default class SphereControls {
     document.addEventListener('keyup', this.onKeyUp);
     document.addEventListener('pointerlockchange', this.onPointerLock);
     this.domElement.addEventListener('click', ()=> this.domElement.requestPointerLock());
+
+    // Physics state
+    this.velocity = new THREE.Vector3(0, 0, 0);
+    this.onGround = false;
+    this.sliding = false;
+    this.currentSurface = null;
+    
+    // Physics settings
+    this.slideAngleThreshold = 0.6; // cos of max angle (~53 degrees)
+    this.slideAcceleration = 0.05;  // Sliding force
+    this.slideFriction = 0.98;      // Slide friction (reduces speed)
   }
 
   getObject() {
@@ -87,13 +98,21 @@ export default class SphereControls {
   onKeyDown(e) { this.keys[e.key.toLowerCase()] = true; }
   onKeyUp(e)   { this.keys[e.key.toLowerCase()] = false; }
 
-  update() {
-    // gravity/jump omitted for brevity—keep previous code if needed
-
-    // movement
+  update(delta) {
+    // Cache old position for collision response
+    const oldPos = this.yawObject.position.clone();
+    
+    // Apply gravity/jumping
+    // ...existing gravity code if any...
+    
+    // Reset surface state
+    this.onGround = false;
+    this.sliding = false;
+    this.currentSurface = null;
+    
+    // Process keyboard movement
     const pos = this.yawObject.position;
     const upDir = pos.clone().normalize();
-
     // get camera forward
     const forward = new THREE.Vector3();
     this.camera.getWorldDirection(forward);              // direction camera faces
@@ -160,7 +179,105 @@ export default class SphereControls {
       }
     }
 
+    // After movement, check for surface interaction
+    this.checkSurfaceInteraction(upDir);
+    
+    // Process sliding physics on steep surfaces
+    if (this.sliding && this.currentSurface) {
+      const surfaceNormal = this.currentSurface.direction;
+      
+      // Calculate slide vector (downhill direction)
+      const slideVector = new THREE.Vector3();
+      slideVector.crossVectors(
+        upDir.clone().cross(surfaceNormal).normalize(),
+        surfaceNormal
+      ).normalize();
+      
+      // Apply slide force
+      const slideForce = this.slideAcceleration * delta * 60;
+      this.velocity.add(slideVector.multiplyScalar(slideForce));
+      
+      // Apply friction based on surface
+      const friction = this.currentSurface.friction || 0.98;
+      this.velocity.multiplyScalar(friction);
+      
+      // Apply velocity
+      this.yawObject.position.add(this.velocity);
+      
+      // Update orientation to match new position
+      const newUpDir = this.yawObject.position.clone().normalize();
+      this.yawObject.up.copy(newUpDir);
+    } else {
+      // Gradually reduce velocity when not sliding
+      this.velocity.multiplyScalar(0.9);
+    }
+    
     return true;
+  }
+
+  checkSurfaceInteraction(upDir) {
+    const pos = this.yawObject.position.clone();
+    const rayOrigin = pos.clone();
+    const rayDir = pos.clone().negate().normalize();
+    
+    // Cast ray downward
+    const raycaster = new THREE.Raycaster(rayOrigin, rayDir);
+    raycaster.far = this.playerRadius + 0.1; // Short distance
+    
+    // Filter collidables to check only solid objects
+    const validCollidables = this.collidables.filter(obj => {
+      if (!obj.mesh || !obj.direction) return false;
+      if (obj.noCollision) return false;
+      return true;
+    });
+    
+    // Cast ray to check for ground
+    const intersects = [];
+    validCollidables.forEach(obj => {
+      if (obj.mesh instanceof THREE.Mesh && obj.mesh.geometry) {
+        const localRay = raycaster.ray.clone();
+        const inverseMatrix = new THREE.Matrix4().copy(obj.mesh.matrixWorld).invert();
+        localRay.applyMatrix4(inverseMatrix);
+        
+        const intersect = localRay.intersectTriangle(
+          new THREE.Vector3(-1, 0, -1),
+          new THREE.Vector3(-1, 0, 1),
+          new THREE.Vector3(1, 0, 1),
+          false,
+          new THREE.Vector3()
+        );
+        
+        if (intersect) {
+          intersects.push({
+            object: obj,
+            point: intersect
+          });
+        }
+      }
+    });
+    
+    // Process the closest intersection
+    if (intersects.length > 0) {
+      // Sort by distance
+      intersects.sort((a, b) => {
+        return a.distance - b.distance;
+      });
+      
+      const closest = intersects[0];
+      const surfaceObj = closest.object;
+      
+      // Calculate angle between surface normal and up vector
+      const surfaceNormal = surfaceObj.direction;
+      const surfaceDot = upDir.dot(surfaceNormal);
+      
+      this.onGround = true;
+      this.currentSurface = surfaceObj;
+      
+      // Check if surface is steep enough to slide
+      if (surfaceDot < this.slideAngleThreshold && surfaceObj.mesh.userData.isRock) {
+        this.sliding = true;
+      }
+    }
   }
 
   reset() {

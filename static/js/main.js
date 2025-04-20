@@ -7,7 +7,7 @@ import { initEnvironment, collidables } from './world_objects.js';
 import OrientationHelper from './OrientationHelper.js';
 import FXManager from './fx_manager.js';
 import LowPolyGenerator from './low_poly_generator.js';
-import AudioManager from './audio_manager.js';
+// import AudioManager from './audio_manager.js'; // Comment out the audio manager import if you don't need it
 
 // --- Constants ---
 const R = 100; // Update sphere radius from 50 to 100 to match world_objects.js
@@ -80,18 +80,19 @@ const worldConfig = {
   lakeDepth: 5.0,             // How deep to recess the lake
   waterOffset: 0.5,           // How far below terrain rim to place water
   
-  // Base trees from world_objects.js
+  // Base trees 
   baseTrees: {
-    trunkHeight: 10,          // Trunk height
-    trunkSink: 0,            // How deep trunk sinks
-    foliageHeight: 10,        // Foliage height
-    foliageSink: 8,           // How deep foliage sinks
+    trunkHeight: 10,          // Height of trunk (half added above terrain)
+    trunkSink: 5,             // How deep trunk is embedded in ground (was 0)
+    foliageHeight: 10,        // Height of the foliage cone
+    foliageSink: 0,           // How deep foliage sits (was 8 - adjust to 0)
+    count: 20                 // Number of trees
   },
   
-  // Low-poly trees
+  // Low-poly trees (apple trees, interactive)
   lpTrees: {
-    height: 0,                // Height offset above terrain
-    sink: 2,                  // How deep trunks sink into terrain
+    height: 2,                // Height offset above terrain
+    sink: 4,                  // How deep trunks sink into terrain
     minSize: 8,               // Minimum tree size
     maxSize: 18,              // Maximum tree size
     count: 1,                 // Trees per cluster (min)
@@ -152,8 +153,30 @@ const worldConfig = {
     count: 8,                 // Base number of environmental clusters
     randomExtra: 4,           // Additional random clusters (0-4)
     positionVariation: 0.15   // Random direction variation (0-1)
+  },
+  
+  // Boulder settings
+  boulders: {
+    height: 0,             // Height offset above terrain  
+    sink: 0.5,             // How deep they sink into terrain
+    minSize: 2.5,          // Minimum boulder size
+    maxSize: 4.0,          // Maximum boulder size
+    count: 5               // Number of boulders to place
+  },
+
+  // Apple tree settings
+  appleTrees: {
+    height: 0,                // Height offset above terrain
+    sink: 2,                  // How deep trunks sink into terrain
+    minSize: 6,               // Minimum tree size (smaller than regular trees)
+    maxSize: 12,              // Maximum tree size
+    count: 1,                 // Trees per cluster (min)
+    countVariation: 2         // Additional random trees per cluster
   }
 };
+
+// Track fallen apples
+const fallenApples = [];
 
 // Modified initEnvironment to export placeOnSphere function
 initEnvironment(scene, 'medium', worldConfig, (placerFunc) => {
@@ -242,6 +265,27 @@ function enhanceEnvironment() {
         placeOnSphereFunc(grass, grassDir, 
                           worldConfig.lpGrass.height, worldConfig.lpGrass.sink);
       }
+
+      // Add apple trees in this cluster (separate from regular trees)
+      const appleTreeCount = worldConfig.appleTrees.count + 
+                     Math.floor(Math.random() * worldConfig.appleTrees.countVariation);
+      
+      for (let t = 0; t < appleTreeCount; t++) {
+        // Create slight variation in direction
+        const treeDir = dir.clone().add(
+          new THREE.Vector3(
+            (Math.random() - 0.5) * worldConfig.clusters.positionVariation,
+            (Math.random() - 0.5) * worldConfig.clusters.positionVariation,
+            (Math.random() - 0.5) * worldConfig.clusters.positionVariation
+          )
+        ).normalize();
+        
+        const treeSize = worldConfig.appleTrees.minSize + 
+                        Math.random() * (worldConfig.appleTrees.maxSize - worldConfig.appleTrees.minSize);
+        const tree = LowPolyGenerator.createTree(treeSize);
+        placeOnSphereFunc(tree, treeDir, 
+                          worldConfig.appleTrees.height, worldConfig.appleTrees.sink);
+      }
     }
     
     // Add additional scattered rocks
@@ -252,6 +296,19 @@ function enhanceEnvironment() {
       const rock = LowPolyGenerator.createRock(rockSize);
       placeOnSphereFunc(rock, dir, 
                         worldConfig.scatteredRocks.height, worldConfig.scatteredRocks.sink);
+    }
+    
+    // Add special large boulders for climbing
+    for (let i = 0; i < worldConfig.boulders.count; i++) {
+      const dir = new THREE.Vector3().randomDirection();
+      const size = worldConfig.boulders.minSize + 
+                  Math.random() * (worldConfig.boulders.maxSize - worldConfig.boulders.minSize);
+                  
+      const boulder = LowPolyGenerator.createBoulder(size);
+      placeOnSphereFunc(boulder, dir, 
+                      worldConfig.boulders.height, worldConfig.boulders.sink);
+                      
+      debug(`Placed boulder ${i+1} of ${worldConfig.boulders.count}`);
     }
     
     debug("Environment enhanced successfully");
@@ -269,15 +326,14 @@ const controls = new SphereControls(
   {
     sphereRadius: R,
     getTerrainHeight: getTerrainHeight,
-    moveSpeed: 1.0, // Increase speed for larger planet
+    moveSpeed: 1.0, 
     lookSpeed: 0.002,
-    jumpStrength: 0.5, // Scaled up jump height
+    jumpStrength: 0.5,
     gravity: -0.03,
-    eyeHeight: 1.8,
+    eyeHeight: 1.9,     // Increased from 1.8 to 1.9 (~1ft taller)
     createPlayerBody: true,
-    playerRadius: 1.0, // Increased from 0.6
+    playerRadius: 1.0,
     collidables: collidables,
-    // Start player at a specific point above terrain
     startPosition: new THREE.Vector3(0, 0, 1).normalize()
   }
 );
@@ -288,47 +344,15 @@ scene.add(controls.getObject());
 // Add orientation helper
 const orientHelper = new OrientationHelper(controls.getObject());
 
+// Remove particle setup - commenting out
 // Initialize FX Manager AFTER controls are created
 const fxManager = new FXManager(scene, controls.camera, renderer);
 
+// Comment out audio initialization and usage
 // Initialize audio manager
-const audioManager = new AudioManager(controls.camera);
+// const audioManager = new AudioManager(controls.camera);
 
-// Setup effects AFTER fxManager and controls are initialized
-function setupWorldEffects() {
-  // Create a waterfall near the lake
-  const waterfall1 = fxManager.createWaterfall(
-    new THREE.Vector3(70, -20, 70), // position
-    new THREE.Vector3(0, 1, 0),    // direction
-    3, // width
-    10, // height
-    300 // particle count
-  );
-  
-  // Create fireflies near the cabin
-  const cabinDir = new THREE.Vector3(1, 0, 1).normalize();
-  const cabinPos = cabinDir.clone().multiplyScalar(R);
-  fxManager.createFireflies(cabinPos, 10, 50);
-  
-  // More fireflies in tree-dense areas
-  for (let i = 0; i < 3; i++) {
-    const randomDir = new THREE.Vector3().randomDirection();
-    const pos = randomDir.clone().multiplyScalar(R);
-    fxManager.createFireflies(pos, 8 + Math.random() * 5, 30 + Math.random() * 20);
-  }
-  
-  // Add waterfall sound
-  const waterfallPos = new THREE.Vector3(70, -20, 70);
-  const waterfallSound = audioManager.createWaterfallSound(waterfallPos);
-  scene.add(waterfallSound);
-  
-  // Add campfire sound near cabin
-  const fireSound = audioManager.createFireSound(cabinPos);
-  scene.add(fireSound);
-}
-
-// Call setupWorldEffects after ALL initialization
-setupWorldEffects();
+// Remove setupWorldEffects function entirely
 
 // Trigger initial resize
 onWindowResize();
@@ -345,13 +369,12 @@ function animate() {
   // Re-orthonormalize player axes each frame
   orientHelper.update();
   
-  // Update visual effects
-  fxManager.update();
+  // Handle apple physics and collisions
+  updateApplePhysics(delta);
   
-  // Update audio (pass player velocity for dynamic sound changes)
-  const playerVelocity = controls.getVelocity ? controls.getVelocity() : new THREE.Vector3();
-  audioManager.updateDayNightCycle(fxManager.timeOfDay);
-  audioManager.update(delta, playerVelocity);
+  // REMOVED: Audio manager updates
+  // audioManager.updateDayNightCycle(fxManager.timeOfDay);
+  // audioManager.update(delta, playerVelocity);
   
   // Render scene
   renderer.render(scene, controls.camera);
@@ -361,6 +384,135 @@ function animate() {
 
 debug("Starting animation loop");
 animate();
+
+// Physics for detached apples
+function updateApplePhysics(delta) {
+  // Apply gravity and collision for fallen apples
+  for (let i = fallenApples.length - 1; i >= 0; i--) {
+    const apple = fallenApples[i];
+    if (!apple || !apple.userData) continue;
+    
+    // Apply gravity toward planet center
+    const gravityDir = apple.position.clone().normalize().negate();
+    apple.userData.velocity.addScaledVector(gravityDir, 0.05 * delta);
+    
+    // Apply velocity to position
+    apple.position.addScaledVector(apple.userData.velocity, delta);
+    
+    // Apply rotation
+    apple.rotation.x += apple.userData.angularVelocity.x * delta;
+    apple.rotation.y += apple.userData.angularVelocity.y * delta;
+    apple.rotation.z += apple.userData.angularVelocity.z * delta;
+    
+    // Check for terrain collision
+    const appleDir = apple.position.clone().normalize();
+    const terrainHeight = getTerrainHeight(appleDir);
+    const terrainRadius = R + terrainHeight;
+    
+    // If apple hits terrain, stop it
+    if (apple.position.length() < terrainRadius + 0.15) {
+      // Position at surface
+      apple.position.copy(appleDir.multiplyScalar(terrainRadius + 0.15));
+      
+      // Bounce with damping
+      const normalVel = apple.userData.velocity.dot(appleDir);
+      if (normalVel < 0) {
+        // Reflect velocity vector with damping
+        const restitution = 0.3; // Bounciness
+        apple.userData.velocity.addScaledVector(appleDir, -normalVel * (1 + restitution));
+        
+        // Apply friction to tangent component
+        apple.userData.velocity.multiplyScalar(0.95);
+      }
+      
+      // If almost stopped, remove from physics simulation
+      if (apple.userData.velocity.lengthSq() < 0.01) {
+        apple.userData.velocity.set(0, 0, 0);
+        apple.userData.isResting = true;
+        
+        // Orient apple to terrain
+        const upVector = apple.position.clone().normalize();
+        const tempMatrix = new THREE.Matrix4();
+        tempMatrix.lookAt(
+          new THREE.Vector3(0, 0, 0),
+          apple.position,
+          new THREE.Vector3(0, 1, 0)
+        );
+        apple.quaternion.setFromRotationMatrix(tempMatrix);
+        
+        // Remove from physics list after a while
+        setTimeout(() => {
+          const idx = fallenApples.indexOf(apple);
+          if (idx !== -1) fallenApples.splice(idx, 1);
+        }, 10000); // Remove after 10 seconds
+      }
+    }
+  }
+  
+  // Check for nearby apples to detach from trees
+  if (Math.random() < 0.01) { // 1% chance per frame to check
+    try {
+      checkForAppleDetachment();
+    } catch (e) {
+      console.error("Error in apple detachment:", e);
+    }
+  }
+}
+
+// Check if any apples should detach when player is nearby
+function checkForAppleDetachment() {
+  // Get player position
+  const playerPos = controls.getObject().position;
+  
+  // Find all apple trees in range - using a safer traversal method
+  const appleTrees = [];
+  scene.traverse(object => {
+    if (object.userData && object.userData.isAppleTree) {
+      appleTrees.push(object);
+    }
+  });
+  
+  // Process each tree separately
+  appleTrees.forEach(tree => {
+    // Check if tree is close to player
+    const treePos = tree.position;
+    const distSq = playerPos.distanceToSquared(treePos);
+    
+    // Only process trees within reasonable range
+    if (distSq > 400) return; // 20 units squared
+    
+    // Find apples on this tree
+    const apples = [];
+    tree.traverse(child => {
+      if (child.userData && child.userData.isApple && child.userData.detachable) {
+        apples.push(child);
+      }
+    });
+    
+    // Process apples - separate from traversal to avoid modification issues
+    apples.forEach(apple => {
+      // Small random chance for this apple to detach
+      if (Math.random() < 0.1) { // 10% chance when checking
+        try {
+          // Get world position before removing
+          const worldPos = apple.getWorldPosition(new THREE.Vector3());
+          
+          // Remove from parent
+          apple.parent.remove(apple);
+          
+          // Create and add detached apple
+          const detachedApple = LowPolyGenerator.createDetachedApple(worldPos);
+          scene.add(detachedApple);
+          fallenApples.push(detachedApple);
+          
+          console.log("Apple detached from tree!");
+        } catch (e) {
+          console.error("Error detaching apple:", e);
+        }
+      }
+    });
+  });
+}
 
 function setupDebugCommands() {
   console.log("Debug commands available:");

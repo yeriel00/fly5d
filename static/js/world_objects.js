@@ -1,6 +1,6 @@
 // --- Import Three.js Module ---
 import * as THREE from 'three';
-// --- End Import ---
+import LowPolyGenerator from './low_poly_generator.js';
 
 export const collidables = [];
 
@@ -191,33 +191,59 @@ export function initEnvironment(scene, quality, config = {}, callback) {
     return true;
   }
 
-  // --- Trees (taller, but lowered into ground) ---
-  const treeSeg = quality === 'high' ? 12 : quality === 'medium' ? 6 : 3;
-  const trunkHeight = config.baseTrees?.trunkHeight || 10;
-  const trunkSink = config.baseTrees?.trunkSink || 12;
-  const foliageHeight = config.baseTrees?.foliageHeight || 10;
-  const foliageSink = config.baseTrees?.foliageSink || 8;
+  // --- Trees - Fix the base trees to be properly grounded with foliage at the top
+  const treeSeg = quality === 'high' ? 8 : quality === 'medium' ? 6 : 4; // Lower polygon count
 
-  for (let i = 0; i < 20; i++) {
+  // Extract tree parameters from config
+  const trunkHeight = config.baseTrees?.trunkHeight || 10;
+  const trunkSink = config.baseTrees?.trunkSink || 5;
+  const foliageHeight = config.baseTrees?.foliageHeight || 10;
+  const foliageSink = config.baseTrees?.foliageSink || 0;
+  const treeCount = config.baseTrees?.count || 20;
+
+  for (let i = 0; i < treeCount; i++) {
     const dir = new THREE.Vector3().randomDirection();
     // skip lake region
     const dotToLake = dir.dot(lakeCenter);
     const angleToLake = Math.acos(Math.max(-1, Math.min(1, dotToLake)));
     if (angleToLake < lakeRadius * 1.2) continue;
 
-    // trunk
+    // Create a large low-poly trunk with parameters from config
+    const trunkGeo = new THREE.CylinderGeometry(1.0, 1.5, trunkHeight * 2, treeSeg, 2);
+    
+    // Apply displacement for natural look
+    LowPolyGenerator.applyRandomVertexDisplacement(trunkGeo, 0.2);
+    
     const trunk = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.6, 0.8, trunkHeight * 2, treeSeg),
-      new THREE.MeshLambertMaterial({ color: 0x8B4513 })
+      trunkGeo,
+      new THREE.MeshLambertMaterial({ 
+        color: 0x8B4513, 
+        flatShading: true 
+      })
     );
-    placeOnSphere(trunk, dir, trunkHeight, trunkSink);
-
-    // foliage
-    const foliage = new THREE.Mesh(
-      new THREE.ConeGeometry(6, foliageHeight * 2, treeSeg),
-      new THREE.MeshLambertMaterial({ color: 0x228B22 })
-    );
-    placeOnSphere(foliage, dir, trunkHeight + foliageHeight, foliageSink);
+    
+    // Place the trunk with appropriate sinking to ground it
+    const trunkPlaced = placeOnSphere(trunk, dir, trunkHeight, trunkSink);
+    
+    if (trunkPlaced) {
+      // Create a large low-poly foliage cone
+      const foliageGeo = new THREE.ConeGeometry(6, foliageHeight * 2, treeSeg, 2);
+      
+      // Apply displacement for natural look
+      LowPolyGenerator.applyRandomVertexDisplacement(foliageGeo, 0.8);
+      
+      const foliage = new THREE.Mesh(
+        foliageGeo,
+        new THREE.MeshLambertMaterial({ 
+          color: 0x006400, // Darker green for base trees
+          flatShading: true 
+        })
+      );
+      
+      // Place foliage directly above the trunk's position
+      // Using the same direction but with higher offset to position at top of trunk
+      placeOnSphere(foliage, dir, trunkHeight * 2, foliageSink);
+    }
   }
 
   // --- Fence (band around equator) ---
