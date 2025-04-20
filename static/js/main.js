@@ -76,10 +76,10 @@ const uniforms = {
     u_glowIntensity:{ value: config.glowIntensity }
 };
 
-// Add ambient and directional lights
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+// Add ambient and directional lights with increased intensity
+const ambientLight = new THREE.AmbientLight(0xffffff, 1.0); // boost ambient light
 scene.add(ambientLight);
-const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.0); // boost directional light
 dirLight.position.set(5, 10, 7.5);
 scene.add(dirLight);
 
