@@ -125,10 +125,6 @@ function handleResize() {
 window.addEventListener('resize', handleResize);
 handleResize(); // Initial call
 
-// Camera / movement state
-let yaw = 0, pitch = 0;
-const keys = {};
-
 // Key event handlers
 window.addEventListener('keydown', e => {
     keys[e.key.toLowerCase()] = true;
