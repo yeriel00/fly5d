@@ -7,8 +7,9 @@ const scene = new THREE.Scene();
 
 // Movement state
 const R = 50, eyeH = 1.6;
-let camNorm = new THREE.Vector3(0,1,0); // Unit surface normal
-let yaw=0,pitch=0;
+let camNorm = new THREE.Vector3(0,1,0);               // Unit surface normal
+let camPos  = camNorm.clone().multiplyScalar(R + eyeH); // Camera world position
+let yaw=0, pitch=0;
 const keys={};
 
 // Perspective camera
