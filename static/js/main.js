@@ -15,6 +15,10 @@ const camera = new THREE.OrthographicCamera(-d * aspect, d * aspect, d, -d, 1, 1
 camera.position.copy(camPos);
 scene.add(camera);
 
+// After creating the camera and adding it to the scene, add:
+const cameraHelper = new THREE.CameraHelper(camera);
+scene.add(cameraHelper);
+
 // Performance monitoring
 let lastFrameTime = 0;
 let frameCount = 0;
@@ -246,11 +250,11 @@ function animate(now) {
     
     // Update UI display
     updateUIValues();
-    
+    camera.updateMatrixWorld();  // ensure transformation is updated
     // Update the orthographic camera's position and orientation:
     camera.position.copy(camPos);
     camera.lookAt(camPos.clone().add(forward));
-    
+    requestAnimationFrame(animate);
     // Render scene
     renderer.render(scene, camera);
     requestAnimationFrame(animate);
@@ -259,10 +263,9 @@ function animate(now) {
 // Start animation loop
 requestAnimationFrame(animate);
 
-// Touch controls for mobile devices
-let touchStartX = 0, touchStartY = 0;
-let touchMoveX = 0, touchMoveY = 0;
+// Corrected Touch Controls:
 let touchActive = false;
+let touchStartX = 0, touchStartY = 0;
 
 canvas.addEventListener('touchstart', e => {
     touchStartX = e.touches[0].clientX;
@@ -273,19 +276,20 @@ canvas.addEventListener('touchstart', e => {
 
 canvas.addEventListener('touchmove', e => {
     if (!touchActive) return;
-    
-    touchMoveX = e.touches[0].clientX - touchStartX;
-    touchMoveY = e.touches[0].clientY - touchStartY;
-    
-    // Apply movements
+    const touchMoveX = e.touches[0].clientX - touchStartX;
+    const touchMoveY = e.touches[0].clientY - touchStartY;
+  
+    // Apply movements to modify yaw and pitch
     yaw += touchMoveX * 0.01;
     pitch = Math.max(Math.min(pitch - touchMoveY * 0.01, Math.PI/2 - 0.01), -Math.PI/2 + 0.01);
-    
+  
+    // Update starting touch positions
     touchStartX = e.touches[0].clientX;
     touchStartY = e.touches[0].clientY;
     e.preventDefault();
 });
 
-canvas.addEventListener('touchend', () => {
+canvas.addEventListener('touchend', e => {
     touchActive = false;
+    e.preventDefault();
 });
