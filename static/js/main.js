@@ -7,11 +7,11 @@ import { initEnvironment, collidables } from './world_objects.js';
 import OrientationHelper from './OrientationHelper.js';
 
 // --- Constants ---
-const R = 50; // Sphere radius
+const R = 100; // Update sphere radius from 50 to 100 to match world_objects.js
 
 // --- Terrain Height Function ---
 const TERRAIN_FREQ = 5.0;
-const TERRAIN_AMP = 1.5;
+const TERRAIN_AMP = 2.5; // Update amplitude to match world_objects.js
 
 function getTerrainHeight(normPos) {
   const pos = normPos.clone().multiplyScalar(R);
@@ -71,14 +71,16 @@ const controls = new SphereControls(
   {
     sphereRadius: R,
     getTerrainHeight: getTerrainHeight,
-    moveSpeed: 0.5,
+    moveSpeed: 1.0, // Increase speed for larger planet
     lookSpeed: 0.002,
-    jumpStrength: 0.3,
-    gravity: -0.02,
-    eyeHeight: 1.6,
+    jumpStrength: 0.5, // Scaled up jump height
+    gravity: -0.03,
+    eyeHeight: 1.8,
     createPlayerBody: true,
-    playerRadius: 0.6, 
-    collidables: collidables // Pass the actual collidables array, not an empty array
+    playerRadius: 1.0, // Increased from 0.6
+    collidables: collidables,
+    // Start player at a specific point above terrain
+    startPosition: new THREE.Vector3(0, 0, 1).normalize()
   }
 );
 
