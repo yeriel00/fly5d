@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import SphereControls from './SphereControls.js';
 import { initEnvironment, collidables } from './world_objects.js';
+import OrientationHelper from './OrientationHelper.js';
 
 // --- Constants ---
 const R = 50; // Sphere radius
@@ -84,6 +85,9 @@ const controls = new SphereControls(
 // Add controls object to scene
 scene.add(controls.getObject());
 
+// Add orientation helper
+const orientHelper = new OrientationHelper(controls.getObject());
+
 // Trigger initial resize
 onWindowResize();
 
@@ -95,6 +99,9 @@ function animate() {
   
   // Update controls with delta time
   controls.update(clock.getDelta());
+  
+  // Re-orthonormalize player axes each frame
+  orientHelper.update();
   
   // Render scene
   renderer.render(scene, controls.camera);
