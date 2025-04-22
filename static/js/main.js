@@ -131,8 +131,8 @@ const worldConfig = {
   
   // Cabin - already enormous in world_objects.js after last change
   cabin: {
-    height: 8.0,            
-    sink: 3.0,              
+    height: 15.0,            
+    sink: 6.0,              
     scale: 6.0,             
     doorScale: 2.5,       
     windowScale: 3.0,     
@@ -548,6 +548,67 @@ function setupDebugCommands() {
   };
 
   console.log("Player commands: debugPlayer(), makeJump(), togglePlayerDebug()");
+
+  // Add collision visualization command
+  window.showCollisionShapes = (show = true) => {
+    if (!scene) return;
+    
+    // Remove any existing helpers first
+    scene.traverse(obj => {
+      if (obj.userData?.isCollisionHelper) {
+        scene.remove(obj);
+      }
+    });
+    
+    if (!show) return "Collision helpers hidden";
+    
+    // Add collision visualizers for all collidables
+    collidables.forEach((obj, index) => {
+      if (!obj.direction || !obj.position || index === 0) return; // Skip planet or invalid objects
+      
+      let helper;
+      
+      if (obj.mesh.userData?.isTree || obj.mesh.userData?.isPineTree) {
+        // For smooth tree trunks, use a cylinder with fewer segments
+        const collisionHeight = obj.collisionHeight || (obj.radius * 2);
+        // Use 8 segments for smooth appearance (instead of 16)
+        const radius = Math.max(2.0, obj.radius * 0.4);
+        const geometry = new THREE.CylinderGeometry(radius, radius, collisionHeight, 8);
+        const material = new THREE.MeshBasicMaterial({
+          color: 0xff0000,
+          wireframe: true,
+          opacity: 0.3,
+          transparent: true
+        });
+        helper = new THREE.Mesh(geometry, material);
+        // Position cylinder at proper height along the trunk
+        helper.position.copy(obj.position);
+        helper.position.add(obj.direction.clone().multiplyScalar(collisionHeight / 2));
+        // Orient the cylinder along the tree trunk direction
+        helper.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), obj.direction);
+      } else {
+        // Use sphere helper for other objects
+        const radius = obj.radius * 0.5 + playerConfig.playerRadius * 0.7;
+        helper = new THREE.Mesh(
+          new THREE.SphereGeometry(radius, 16, 12),
+          new THREE.MeshBasicMaterial({
+            color: 0x00ff00,
+            wireframe: true,
+            opacity: 0.3,
+            transparent: true
+          })
+        );
+        helper.position.copy(obj.position);
+      }
+      
+      helper.userData = { isCollisionHelper: true };
+      scene.add(helper);
+    });
+    
+    return `Showing collision shapes for ${collidables.length} objects`;
+  };
+  
+  console.log("- showCollisionShapes(true/false) - Show collision volumes");
 }
 
 // Call at startup

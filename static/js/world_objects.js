@@ -137,17 +137,47 @@ export function initEnvironment(scene, quality, config = {}, callback) {
       });
     }
 
-    // collision radius
+    // IMPROVED: Better collision detection for different object types
+    // First detect what type of object we're dealing with
+    const isTree = mesh.name?.includes('Tree') || mesh.userData?.isTree || mesh.userData?.isPineTree;
+    const isRock = mesh.name?.includes('Rock') || mesh.userData?.isRock;
+    const isCabin = mesh.name?.includes('Cabin');
+    
+    // Default collision radius
     let radius = 1.0;
-    if (mesh instanceof THREE.Mesh && mesh.geometry.boundingSphere) {
-      radius = mesh.geometry.boundingSphere.radius;
-    } else if (mesh instanceof THREE.Group) {
-      radius = Math.max(
-        mesh.scale.x, mesh.scale.y, mesh.scale.z
-      ) * 2;
-      // special tree/cabin cases
-      if (heightOffset > 3) radius = 2;
-      else if (heightOffset === 0 && mesh.children.length > 1) radius = 4;
+    let collisionHeight = 0;
+    
+    if (isTree) {
+      // IMPROVED: For trees, use much better collision detection
+      // Calculate height from userData or estimate from mesh scale
+      const totalHeight = mesh.userData?.totalHeight || mesh.userData?.height || heightOffset * 2;
+      
+      // For trees, use a cylinder-shaped collision area (radius,height)
+      radius = totalHeight * 0.25; // Width based on tree height
+      collisionHeight = totalHeight * 0.9; // 90% of total tree height
+      
+      // Clay trees typically have userData.totalHeight, pine trees have userData.height
+      console.log(`Tree collision: radius=${radius.toFixed(1)}, height=${collisionHeight.toFixed(1)}`);
+    } 
+    else if (isRock) {
+      // For rocks, use the mesh's bounding sphere if available
+      if (mesh instanceof THREE.Mesh && mesh.geometry.boundingSphere) {
+        radius = mesh.geometry.boundingSphere.radius * 1.2; // Slightly larger than actual rock
+      } else {
+        radius = Math.max(mesh.scale.x, mesh.scale.y, mesh.scale.z) * 2;
+      }
+    }
+    else if (isCabin) {
+      // For cabin, use a larger collision radius
+      radius = 10; // Large enough to cover the entire cabin
+    }
+    else {
+      // Generic collision size calculation for other objects
+      if (mesh instanceof THREE.Mesh && mesh.geometry.boundingSphere) {
+        radius = mesh.geometry.boundingSphere.radius;
+      } else if (mesh instanceof THREE.Group) {
+        radius = Math.max(mesh.scale.x, mesh.scale.y, mesh.scale.z) * 2;
+      }
     }
 
     // Add to collidables array with proper properties
@@ -157,7 +187,8 @@ export function initEnvironment(scene, quality, config = {}, callback) {
       radius,
       direction: dir.clone(),
       heightOffset,
-      baseRadius
+      baseRadius,
+      collisionHeight // NEW: Store collision height for trees
     };
     
     // Copy userData flags if they exist

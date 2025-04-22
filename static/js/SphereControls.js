@@ -241,14 +241,15 @@ export default class SphereControls {
       
       // If on ground but still moving, apply appropriate friction
       if (this.onGround) {
-        // Apply less friction when sliding
-        const frictionFactor = this.sliding ? 0.98 : 0.9;
+        // Set friction nearly equal to 1 for almost no friction during collisions
+        // (For sliding, we still apply a tiny damping factor)
+        const frictionFactor = this.sliding ? 0.99 : 1.0;
         this.velocity.multiplyScalar(frictionFactor);
         
-        // Stop completely at low velocities when not sliding
-        if (!this.sliding && this.velocity.lengthSq() < 0.01) {
-          this.velocity.set(0, 0, 0);
-        }
+        // Optionally, you can disable low-velocity cutoff:
+        // if (!this.sliding && this.velocity.lengthSq() < 0.01) {
+        //   this.velocity.set(0, 0, 0);
+        // }
       }
       
       // Update up vector to match position on the sphere
@@ -314,34 +315,69 @@ export default class SphereControls {
 
       console.log(`Checking ${validCollidables.length} objects for collision`);
 
-      // Check with a smaller threshold radius to allow easier movement
+      // Example collision loop for trees with adjusted threshold:
       let collide = false;
+      let collisionNormal = new THREE.Vector3();
       for (const obj of validCollidables) {
         const objDir = obj.direction;
         const posDir = finalPos.clone().normalize();
-        
-        // Calculate distance
         const dot = posDir.dot(objDir);
         const angle = Math.acos(Math.min(Math.max(dot, -1), 1));
         const surfaceDist = angle * this.radius;
         
-        // Use a MUCH smaller collision threshold - make large objects navigable
         const objectRadius = obj.radius || 1.0;
-        const threshold = objectRadius * 0.5 + this.playerRadius * 0.25;
-        
+        let threshold;
+        if (obj.mesh.userData?.isTree || obj.mesh.userData?.isPineTree) {
+          // Lower threshold from 2.0 to 1.6 so trees don't block too far out:
+          threshold = Math.max(1.6, objectRadius * 0.4);
+        } else {
+          threshold = objectRadius * 0.5 + this.playerRadius * 0.7;
+        }
         if (surfaceDist < threshold) {
           collide = true;
-          console.log(`Collision with ${obj.mesh.constructor.name}: dist=${surfaceDist.toFixed(2)}, threshold=${threshold.toFixed(2)}`);
+          collisionNormal.copy(objDir);
           break;
         }
       }
-      
-      // Only move if there's no collision
+
       if (!collide) {
+        // no collision: move as normal
         this.yawObject.position.copy(finalPos);
         this.yawObject.up.copy(finalPos.clone().normalize());
       } else {
-        console.log("Movement blocked by collision");
+        // SIDE‑SWIPE: project mv onto the tangent plane of collisionNormal
+        const mvDir = mv.clone().normalize();
+        const projected = mvDir.projectOnPlane(collisionNormal).normalize();
+        const slideDir = projected.length() > 0.001 ? projected : mvDir;
+        // Use a reduced speed factor (e.g., 0.8) for sliding motion
+        const speedMultiplier = (this.onGround && !this.sliding) ? 1.0 : 0.8;
+        const step = slideDir.multiplyScalar(this.moveSpeed * speedMultiplier);
+        
+        // Candidate new position
+        const candPos = this.yawObject.position.clone().add(step);
+        const candDir = candPos.clone().normalize();
+        const h = this.getTerrainHeight(candDir);
+        const candFinal = candDir.multiplyScalar(this.radius + h + heightAboveTerrain);
+        
+        // Re-test candidate against each collidable
+        let slideBlocked = false;
+        for (const obj2 of validCollidables) {
+          const dDot = Math.min(Math.max(candFinal.clone().normalize().dot(obj2.direction), -1), 1);
+          const dAng = Math.acos(dDot);
+          const dDist = dAng * this.radius;
+          let dThresh = obj2.mesh.userData?.isTree
+                          ? Math.max(1.6, obj2.radius * 0.4)
+                          : obj2.radius * 0.5 + this.playerRadius * 0.7;
+          if (dDist < dThresh) { slideBlocked = true; break; }
+        }
+        
+        if (!slideBlocked) {
+          this.yawObject.position.copy(candFinal);
+          this.yawObject.up.copy(candFinal.clone().normalize());
+          console.log("Sliding across tree trunk");
+        } else {
+          console.log("Side‑swipe blocked by collision");
+        }
       }
     }
 
