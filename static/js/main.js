@@ -10,7 +10,6 @@ import FXManager from './fx_manager.js';
 import LowPolyGenerator from './low_poly_generator.js';
 // import AudioManager from './audio_manager.js'; // Comment out the audio manager import if you don't need it
 import Player from './player.js';
-import { WaterEffect } from './utils/waterEffect.js';
 
 // --- Constants ---
 const R = 400; // INCREASED radius from 300 to 400 for more spacious feel
@@ -70,10 +69,6 @@ const worldConfig = {
   radius: 400,               // UPDATED to match new radius
   noiseFrequency: 5.0,        
   noiseAmplitude: 8.0,       // Increased amplitude
-  
-  // Lake settings
-  lakeDepth: 16.0,           // Deeper lake for more variation
-  waterOffset: 0.5,           
   
   // Pine trees (base trees)
   baseTrees: {
@@ -463,13 +458,6 @@ let waterEffect = null;
 initEnvironment(scene, 'medium', worldConfig, (placerFunc) => {
   placeOnSphereFunc = placerFunc;
   
-  // Create water effect for the lake
-  const waterMesh = collidables.find(obj => obj.isWater)?.mesh;
-  if (waterMesh) {
-    waterEffect = new WaterEffect(waterMesh);
-    debug("Water animation effect created");
-  }
-  
   // After world is built, add low-poly details
   enhanceEnvironment();
   
@@ -505,11 +493,6 @@ onWindowResize();
 // --- Animation Loop ---
 function animate() {
   const delta = clock.getDelta();
-  
-  // Update water animation if it exists
-  if (waterEffect) {
-    waterEffect.update(delta);
-  }
   
   // Update player
   if (player) {

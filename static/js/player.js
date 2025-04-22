@@ -19,9 +19,9 @@ export default class Player {
       startElevation: 30,
       // DOUBLE the eye height AGAIN
       eyeHeight: 6.6, // (3.3 * 2)
-      moveSpeed: 2.0,
+      moveSpeed: 4.0,
       lookSpeed: 0.002,
-      jumpStrength: 5.0,
+      jumpStrength: 20.0,
       gravity: 0.015,
       maxJumps: 2,
       playerRadius: 2.0,

@@ -6,16 +6,13 @@ export const collidables = [];
 
 // --- CONFIGURABLE PARAMETERS --- (Moved to top for clarity)
 let R = 400; // Default Radius
-let lakeDepth = 16.0;
+// Remove lake depth parameter
 let noiseFreq = 5.0;
 let noiseAmp = 2.5; // Base noise amplitude
 
 // Define terrain features globally within this module
 const terrainFeatures = [
-  // Main lake
-  { type: 'lake', center: new THREE.Vector3(0.7, -0.2, 0.7).normalize(), radius: 0.15, depth: 1.0, rimWidth: 0.05 }, // Depth is now a multiplier
-  // Secondary lake
-  { type: 'lake', center: new THREE.Vector3(-0.6, 0.3, 0.5).normalize(), radius: 0.1, depth: 0.7, rimWidth: 0.03 },
+  // Remove lake features
   // Ridge line
   { type: 'ridge', start: new THREE.Vector3(0.1, 0.8, 0.2).normalize(), end: new THREE.Vector3(0.7, 0.5, -0.3).normalize(), width: 0.08, height: 12.0 },
   // Valley
@@ -26,13 +23,12 @@ const terrainFeatures = [
 // This function calculates the *modification* based on features
 function applyTerrainFeatures(dir) {
   let modification = 0;
-  const globalLakeDepth = lakeDepth; // Use the module-level lakeDepth
 
   for (const feature of terrainFeatures) {
-    if (feature.type === 'lake' || feature.type === 'valley') {
+    if (feature.type === 'valley') {
       const dotToFeature = dir.dot(feature.center);
       const angleToFeature = Math.acos(Math.min(Math.max(dotToFeature, -1), 1));
-      const featureDepth = globalLakeDepth * feature.depth; // Apply multiplier
+      const featureDepth = feature.depth * 16.0; // Use fixed depth multiplier
 
       if (angleToFeature < feature.radius) {
         modification -= featureDepth;
@@ -82,10 +78,9 @@ export function getFullTerrainHeight(normPos) {
 export function initEnvironment(scene, quality, config = {}, callback) {
   // Update module-level parameters from config
   R = config.radius || R;
-  lakeDepth = config.lakeDepth || lakeDepth;
+  // Remove lake depth parameter
   noiseFreq = config.noiseFrequency || noiseFreq;
   noiseAmp = config.noiseAmplitude || noiseAmp; // Use configured base noise amplitude
-  const waterOffset = config.waterOffset || 0.5;
   const seg = quality === 'high' ? 64 : quality === 'medium' ? 32 : 16;
 
   // --- Create the planet geometry using the full height function ---
@@ -121,59 +116,10 @@ export function initEnvironment(scene, quality, config = {}, callback) {
       isPlanet: true
   });
 
-
-  // --- Create VISUAL ONLY water planes for lakes ---
-  terrainFeatures.forEach(feature => {
-    if (feature.type === 'lake') {
-      const waterMat = new THREE.MeshLambertMaterial({
-        color: 0x1E90FF,
-        transparent: true,
-        opacity: 0.75,
-        side: THREE.DoubleSide // Render both sides
-      });
-
-      // Calculate the base terrain height at the lake center (without the depression)
-      const centerDir = feature.center;
-      const baseCenterNoise = Math.sin(centerDir.x * noiseFreq) * Math.sin(centerDir.y * noiseFreq) * Math.cos(centerDir.z * noiseFreq);
-      const baseCenterHeight = baseCenterNoise * noiseAmp;
-
-      // Water level is the base height minus a small offset
-      const waterLevelRadius = R + baseCenterHeight - waterOffset;
-      const waterPlaneRadiusWorld = waterLevelRadius * Math.sin(feature.radius); // Approximate radius at water level
-
-      // Create a Circle Geometry for the visual water surface
-      const waterPlaneGeo = new THREE.CircleGeometry(waterPlaneRadiusWorld, 64);
-      const waterPlane = new THREE.Mesh(waterPlaneGeo, waterMat);
-
-      // Position the plane at the calculated water level along the center direction
-      waterPlane.position.copy(centerDir.clone().multiplyScalar(waterLevelRadius));
-
-      // Orient the plane to be tangent to the sphere
-      waterPlane.lookAt(scene.position); // Look towards the center of the scene (0,0,0)
-
-      // Add to scene BUT NOT to collidables
-      scene.add(waterPlane);
-      waterPlane.userData = { isVisualWater: true }; // Mark for identification if needed
-    }
-  });
-
-
   // --- Place objects helper function ---
   // Uses getFullTerrainHeight for accurate placement
   function placeOnSphere(mesh, dir, heightOffset = 0, sinkDepth = 0) {
-    // Check if placing inside any lake feature
-    let isInLake = false;
-    for (const feature of terrainFeatures) {
-        if (feature.type === 'lake') {
-            const dotToLake = dir.dot(feature.center);
-            const angleToLake = Math.acos(Math.min(Math.max(dotToLake, -1), 1));
-            if (angleToLake < feature.radius * 1.1) { // Slightly larger check radius
-                isInLake = true;
-                break;
-            }
-        }
-    }
-    if (isInLake) return false; // Skip placement if inside a lake
+    // Remove lake check
 
     // Compute terrain height using the full function
     const terrainHeight = getFullTerrainHeight(dir);
