@@ -22,13 +22,21 @@ export default class SphereControls {
     camera.position.set(0, options.eyeHeight||1.6, 0);
 
     // Allow for custom start position direction
-    const startDir = options.startPosition || new THREE.Vector3(0, 0, 1).normalize();
+    const startDir = options.startPosition || new THREE.Vector3(0, 1, 0).normalize(); // Default to top of planet
     
     // Calculate terrain height at start position
     const startTerrainHeight = this.getTerrainHeight(startDir);
     
-    // Calculate start position with proper height above terrain
-    const startPos = startDir.clone().multiplyScalar(this.radius + startTerrainHeight + 5); // +5 units above terrain
+    // FIXED: Use much higher elevation to ensure we start outside the planet
+    const startElevation = options.startElevation || 20; // Increased default from 5 to 20
+    
+    // FIXED: Ensure we use the correct radius (this.radius) and add sufficient elevation
+    const startPos = startDir.clone().multiplyScalar(
+      this.radius + startTerrainHeight + startElevation
+    );
+    
+    console.log(`Starting at position: ${startPos.x.toFixed(1)}, ${startPos.y.toFixed(1)}, ${startPos.z.toFixed(1)}`);
+    console.log(`Height above terrain: ${startElevation}`);
     
     // Initialize position and orientation
     this.yawObject.position.copy(startPos);

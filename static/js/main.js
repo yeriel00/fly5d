@@ -10,7 +10,7 @@ import LowPolyGenerator from './low_poly_generator.js';
 // import AudioManager from './audio_manager.js'; // Comment out the audio manager import if you don't need it
 
 // --- Constants ---
-const R = 100; // Update sphere radius from 50 to 100 to match world_objects.js
+const R = 300; // INCREASED radius to 300 for flatter feel
 
 // --- Terrain Height Function ---
 const TERRAIN_FREQ = 5.0;
@@ -72,106 +72,73 @@ debug("Building world...");
 // *****************************************************
 const worldConfig = {
   // Planet settings
-  radius: 100,                // Planet radius
-  noiseFrequency: 5.0,        // Terrain noise frequency
-  noiseAmplitude: 2.5,        // Terrain noise amplitude
+  radius: 300,               
+  noiseFrequency: 5.0,        
+  noiseAmplitude: 6.0,       
   
   // Lake settings
-  lakeDepth: 5.0,             // How deep to recess the lake
-  waterOffset: 0.5,           // How far below terrain rim to place water
+  lakeDepth: 12.0,           
+  waterOffset: 0.5,           
   
-  // Base trees 
+  // Base trees - FIXED: simplified parameters for consistent behavior
   baseTrees: {
-    trunkHeight: 10,          // Height of trunk (half added above terrain)
-    trunkSink: 5,             // How deep trunk is embedded in ground (was 0)
-    foliageHeight: 10,        // Height of the foliage cone
-    foliageSink: 0,           // How deep foliage sits (was 8 - adjust to 0)
-    count: 20                 // Number of trees
+    trunkHeight: 100,      
+    trunkSink: 100,         
+    foliageHeight: 60,      
+    count: 20               
   },
   
-  // Low-poly trees (apple trees, interactive)
+  // Low-poly trees - Adjusted for better trunk visibility
   lpTrees: {
-    height: 2,                // Height offset above terrain
-    sink: 4,                  // How deep trunks sink into terrain
-    minSize: 8,               // Minimum tree size
-    maxSize: 18,              // Maximum tree size
-    count: 1,                 // Trees per cluster (min)
-    countVariation: 2         // Additional random trees per cluster
+    height: 45,              
+    sink: 47,                
+    minSize: 40,             
+    maxSize: 80,             
+    count: 1,                 
+    countVariation: 2,
+    trunkRatio: 1,            
+    minTrunkHeight: 80,       
+    maxTrunkHeight: 120,      
+    useDynamicTrunkHeight: false
   },
   
   // Low-poly rocks
   lpRocks: {
-    height: 0,                // Height offset above terrain
-    sink: 0,                  // How deep rocks sink into terrain
-    minSize: 0.5,             // Minimum rock size
-    maxSize: 2.0,             // Maximum rock size
-    count: 2,                 // Rocks per cluster (min)
-    countVariation: 3         // Additional random rocks per cluster
-  },
-  
-  // Scattered rocks
-  scatteredRocks: {
-    height: 0,                // Height offset above terrain
-    sink: 0,                // How deep scattered rocks sink
-    minSize: 0.8,             // Minimum rock size
-    maxSize: 2.0,             // Maximum rock size
-    count: 15                 // Total scattered rocks
+    height: 0.4,          
+    sink: 1.0,              
+    minSize: 1.6,           
+    maxSize: 5.0,           
+    count: 9,               
+    countVariation: 6,      
+    quality: 'high',        
+    totalCount: 40          
   },
   
   // Low-poly grass
   lpGrass: {
-    height: 0,                // Height offset above terrain
-    sink: 0,                  // How deep grass sinks into terrain
-    minSize: 0.8,             // Minimum grass patch size
-    maxSize: 1.6,             // Maximum grass patch size
-    count: 2,                 // Grass patches per cluster (min)
-    countVariation: 2         // Additional random patches per cluster
+    height: 0,                
+    sink: 0,                  
+    minSize: 1.6,             
+    maxSize: 3.2,             
+    count: 2,                
+    countVariation: 2        
   },
   
-  // Fence posts
-  fence: {
-    height: -1,               // Height offset for fence posts
-    sink: 0,                  // How deep posts sink
-    count: 36                 // Number of fence posts around equator
-  },
-  
-  // Bridge planks
-  bridge: {
-    height: 1,                // Height offset for planks
-    sink: 0,                  // How deep planks sink
-    count: 3                  // Number of bridge planks
-  },
-  
-  // Cabin
+  // Cabin - already enormous in world_objects.js after last change
   cabin: {
-    height: -6,               // Height offset for cabin
-    sink: 3                   // How deep cabin sinks
+    height: 8.0,            
+    sink: 3.0,              
+    scale: 6.0,             
+    doorScale: 2.5,       
+    windowScale: 3.0,     
+    position: new THREE.Vector3(0.8, 0, 0.6).normalize()
   },
   
   // Clusters
   clusters: {
-    count: 8,                 // Base number of environmental clusters
-    randomExtra: 4,           // Additional random clusters (0-4)
-    positionVariation: 0.15   // Random direction variation (0-1)
-  },
-  
-  // Boulder settings
-  boulders: {
-    height: 0,             // Height offset above terrain  
-    sink: 0.5,             // How deep they sink into terrain
-    minSize: 2.5,          // Minimum boulder size
-    maxSize: 4.0,          // Maximum boulder size
-    count: 5               // Number of boulders to place
-  },
-
-  // Apple tree settings
-  appleTrees: {
-    height: 0,                // Height offset above terrain
-    sink: 2,                  // How deep trunks sink into terrain
-    minSize: 6,               // Minimum tree size (smaller than regular trees)
-    maxSize: 12,              // Maximum tree size
-    count: 1,                 // Trees per cluster (min)
-    countVariation: 2         // Additional random trees per cluster
+    count: 8,                 
+    randomExtra: 4,           
+    positionVariation: 0.15   
   }
 };
 
@@ -201,11 +168,15 @@ function enhanceEnvironment() {
     const clusterCount = worldConfig.clusters.count + 
                          Math.floor(Math.random() * worldConfig.clusters.randomExtra);
     
+    // Track total rocks created for global count control
+    let totalRocks = 0;
+    const maxRocks = worldConfig.lpRocks.totalCount || 30;
+    
     for (let i = 0; i < clusterCount; i++) {
       // Create random position on sphere
       const dir = new THREE.Vector3().randomDirection();
       
-      // Add trees in this cluster
+      // Add trees in this cluster with direct trunk height control
       const treeCount = worldConfig.lpTrees.count + 
                        Math.floor(Math.random() * worldConfig.lpTrees.countVariation);
       
@@ -221,16 +192,40 @@ function enhanceEnvironment() {
         
         const treeSize = worldConfig.lpTrees.minSize + 
                         Math.random() * (worldConfig.lpTrees.maxSize - worldConfig.lpTrees.minSize);
-        const tree = LowPolyGenerator.createTree(treeSize);
+        
+        // Trunk height control - use either direct height or ratio
+        let trunkHeight = null;
+        let trunkRatio = worldConfig.lpTrees.trunkRatio || 0.65;
+        
+        if (worldConfig.lpTrees.useDynamicTrunkHeight) {
+          // Use direct trunk height
+          trunkHeight = worldConfig.lpTrees.minTrunkHeight + 
+                       Math.random() * (worldConfig.lpTrees.maxTrunkHeight - worldConfig.lpTrees.minTrunkHeight);
+          
+          // Also update ratio for any code that might still use it
+          trunkRatio = Math.min(1.0, trunkHeight / treeSize);
+          
+          console.log(`Creating tree with explicit trunk height: ${trunkHeight.toFixed(1)}, size: ${treeSize.toFixed(1)}`);
+        } else {
+          // Use trunk ratio with variation
+          trunkRatio = worldConfig.lpTrees.trunkRatio + (Math.random() - 0.5) * 0.2;
+          console.log(`Creating tree with trunk ratio: ${trunkRatio.toFixed(2)}, size: ${treeSize.toFixed(1)}`);
+        }
+        
+        const tree = LowPolyGenerator.createTree(treeSize, null, null, trunkRatio, trunkHeight);
+        
         placeOnSphereFunc(tree, treeDir, 
                           worldConfig.lpTrees.height, worldConfig.lpTrees.sink);
       }
       
-      // Add rocks in this cluster
+      // Add rocks in this cluster - USING CLAY-STYLE ROCKS
       const rockCount = worldConfig.lpRocks.count + 
                        Math.floor(Math.random() * worldConfig.lpRocks.countVariation);
       
-      for (let r = 0; r < rockCount; r++) {
+      // Check global rock count limit
+      const rocksToCreate = Math.min(rockCount, maxRocks - totalRocks);
+      
+      for (let r = 0; r < rocksToCreate; r++) {
         const rockDir = dir.clone().add(
           new THREE.Vector3(
             (Math.random() - 0.5) * worldConfig.clusters.positionVariation,
@@ -244,9 +239,15 @@ function enhanceEnvironment() {
         const rock = LowPolyGenerator.createRock(rockSize);
         placeOnSphereFunc(rock, rockDir, 
                           worldConfig.lpRocks.height, worldConfig.lpRocks.sink);
+        
+        // Update total count
+        totalRocks++;
+        
+        // Stop if we've reached the limit
+        if (totalRocks >= maxRocks) break;
       }
       
-      // Add grass patches in this cluster (similar pattern to above)
+      // Add grass patches in this cluster
       const grassCount = worldConfig.lpGrass.count + 
                         Math.floor(Math.random() * worldConfig.lpGrass.countVariation);
       
@@ -265,51 +266,27 @@ function enhanceEnvironment() {
         placeOnSphereFunc(grass, grassDir, 
                           worldConfig.lpGrass.height, worldConfig.lpGrass.sink);
       }
-
-      // Add apple trees in this cluster (separate from regular trees)
-      const appleTreeCount = worldConfig.appleTrees.count + 
-                     Math.floor(Math.random() * worldConfig.appleTrees.countVariation);
+    }
+    
+    // Add additional scattered rocks if we haven't hit our limit
+    if (totalRocks < maxRocks) {
+      const remainingRocks = maxRocks - totalRocks;
+      debug(`Adding ${remainingRocks} additional scattered clay rocks to reach count limit`);
       
-      for (let t = 0; t < appleTreeCount; t++) {
-        // Create slight variation in direction
-        const treeDir = dir.clone().add(
-          new THREE.Vector3(
-            (Math.random() - 0.5) * worldConfig.clusters.positionVariation,
-            (Math.random() - 0.5) * worldConfig.clusters.positionVariation,
-            (Math.random() - 0.5) * worldConfig.clusters.positionVariation
-          )
-        ).normalize();
-        
-        const treeSize = worldConfig.appleTrees.minSize + 
-                        Math.random() * (worldConfig.appleTrees.maxSize - worldConfig.appleTrees.minSize);
-        const tree = LowPolyGenerator.createTree(treeSize);
-        placeOnSphereFunc(tree, treeDir, 
-                          worldConfig.appleTrees.height, worldConfig.appleTrees.sink);
+      for (let i = 0; i < remainingRocks; i++) {
+        const dir = new THREE.Vector3().randomDirection();
+        const rockSize = worldConfig.lpRocks.minSize + 
+                       Math.random() * (worldConfig.lpRocks.maxSize - worldConfig.lpRocks.minSize);
+        const rock = LowPolyGenerator.createRock(rockSize);
+        placeOnSphereFunc(rock, dir, 
+                         worldConfig.lpRocks.height, worldConfig.lpRocks.sink);
       }
     }
     
-    // Add additional scattered rocks
-    for (let i = 0; i < worldConfig.scatteredRocks.count; i++) {
-      const dir = new THREE.Vector3().randomDirection();
-      const rockSize = worldConfig.scatteredRocks.minSize + 
-                      Math.random() * (worldConfig.scatteredRocks.maxSize - worldConfig.scatteredRocks.minSize);
-      const rock = LowPolyGenerator.createRock(rockSize);
-      placeOnSphereFunc(rock, dir, 
-                        worldConfig.scatteredRocks.height, worldConfig.scatteredRocks.sink);
-    }
+    debug(`Created ${totalRocks} clay-style rocks in total`);
     
-    // Add special large boulders for climbing
-    for (let i = 0; i < worldConfig.boulders.count; i++) {
-      const dir = new THREE.Vector3().randomDirection();
-      const size = worldConfig.boulders.minSize + 
-                  Math.random() * (worldConfig.boulders.maxSize - worldConfig.boulders.minSize);
-                  
-      const boulder = LowPolyGenerator.createBoulder(size);
-      placeOnSphereFunc(boulder, dir, 
-                      worldConfig.boulders.height, worldConfig.boulders.sink);
-                      
-      debug(`Placed boulder ${i+1} of ${worldConfig.boulders.count}`);
-    }
+    // Updated message for clarity
+    debug("Using only smooth clay-style rocks - boulder formations removed");
     
     debug("Environment enhanced successfully");
     
@@ -374,22 +351,29 @@ const physics = {
 
 // --- Initialize Controls ---
 debug("Initializing controls...");
+
+// UPDATED: Set explicit start position on top of planet
+const startPos = new THREE.Vector3(0, 1, 0).normalize(); // Position at north pole
+const startTerrainHeight = getTerrainHeight(startPos);
+const startElevation = 30; // INCREASED: Much higher elevation to ensure we're outside
+
 const controls = new SphereControls(
   new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000),
   canvas,
   {
-    sphereRadius: R,
+    sphereRadius: R, // Now correctly using R = 200 to match worldConfig
     getTerrainHeight: getTerrainHeight,
-    moveSpeed: 1.0, 
+    moveSpeed: 2.0,  // DOUBLED for larger world
     lookSpeed: 0.002,
     jumpStrength: physics.jumpStrength, // Use from physics object
     gravity: physics.gravity,           // Use from physics object
-    maxJumps: physics.maxJumps,  // Pass max jumps parameter
-    eyeHeight: 1.9,    
+    maxJumps: physics.maxJumps,
+    eyeHeight: 3.8,  // DOUBLED for larger world scale
     createPlayerBody: true,
-    playerRadius: 1.0,
+    playerRadius: 2.0,  // DOUBLED for larger world scale
     collidables: collidables,
-    startPosition: new THREE.Vector3(0, 0, 1).normalize()
+    startPosition: startPos, // Using our pre-defined position
+    startElevation: startElevation // New parameter for extra height at start
   }
 );
 
@@ -423,14 +407,7 @@ function animate() {
   
   // Re-orthonormalize player axes each frame
   orientHelper.update();
-  
-  // Handle apple physics and collisions
-  updateApplePhysics(delta);
-  
-  // REMOVED: Audio manager updates
-  // audioManager.updateDayNightCycle(fxManager.timeOfDay);
-  // audioManager.update(delta, playerVelocity);
-  
+
   // Render scene
   renderer.render(scene, controls.camera);
   
@@ -440,134 +417,6 @@ function animate() {
 debug("Starting animation loop");
 animate();
 
-// Physics for detached apples
-function updateApplePhysics(delta) {
-  // Apply gravity and collision for fallen apples
-  for (let i = fallenApples.length - 1; i >= 0; i--) {
-    const apple = fallenApples[i];
-    if (!apple || !apple.userData) continue;
-    
-    // Apply gravity toward planet center
-    const gravityDir = apple.position.clone().normalize().negate();
-    apple.userData.velocity.addScaledVector(gravityDir, 0.05 * delta);
-    
-    // Apply velocity to position
-    apple.position.addScaledVector(apple.userData.velocity, delta);
-    
-    // Apply rotation
-    apple.rotation.x += apple.userData.angularVelocity.x * delta;
-    apple.rotation.y += apple.userData.angularVelocity.y * delta;
-    apple.rotation.z += apple.userData.angularVelocity.z * delta;
-    
-    // Check for terrain collision
-    const appleDir = apple.position.clone().normalize();
-    const terrainHeight = getTerrainHeight(appleDir);
-    const terrainRadius = R + terrainHeight;
-    
-    // If apple hits terrain, stop it
-    if (apple.position.length() < terrainRadius + 0.15) {
-      // Position at surface
-      apple.position.copy(appleDir.multiplyScalar(terrainRadius + 0.15));
-      
-      // Bounce with damping
-      const normalVel = apple.userData.velocity.dot(appleDir);
-      if (normalVel < 0) {
-        // Reflect velocity vector with damping
-        const restitution = 0.3; // Bounciness
-        apple.userData.velocity.addScaledVector(appleDir, -normalVel * (1 + restitution));
-        
-        // Apply friction to tangent component
-        apple.userData.velocity.multiplyScalar(0.95);
-      }
-      
-      // If almost stopped, remove from physics simulation
-      if (apple.userData.velocity.lengthSq() < 0.01) {
-        apple.userData.velocity.set(0, 0, 0);
-        apple.userData.isResting = true;
-        
-        // Orient apple to terrain
-        const upVector = apple.position.clone().normalize();
-        const tempMatrix = new THREE.Matrix4();
-        tempMatrix.lookAt(
-          new THREE.Vector3(0, 0, 0),
-          apple.position,
-          new THREE.Vector3(0, 1, 0)
-        );
-        apple.quaternion.setFromRotationMatrix(tempMatrix);
-        
-        // Remove from physics list after a while
-        setTimeout(() => {
-          const idx = fallenApples.indexOf(apple);
-          if (idx !== -1) fallenApples.splice(idx, 1);
-        }, 10000); // Remove after 10 seconds
-      }
-    }
-  }
-  
-  // Check for nearby apples to detach from trees
-  if (Math.random() < 0.01) { // 1% chance per frame to check
-    try {
-      checkForAppleDetachment();
-    } catch (e) {
-      console.error("Error in apple detachment:", e);
-    }
-  }
-}
-
-// Check if any apples should detach when player is nearby
-function checkForAppleDetachment() {
-  // Get player position
-  const playerPos = controls.getObject().position;
-  
-  // Find all apple trees in range - using a safer traversal method
-  const appleTrees = [];
-  scene.traverse(object => {
-    if (object.userData && object.userData.isAppleTree) {
-      appleTrees.push(object);
-    }
-  });
-  
-  // Process each tree separately
-  appleTrees.forEach(tree => {
-    // Check if tree is close to player
-    const treePos = tree.position;
-    const distSq = playerPos.distanceToSquared(treePos);
-    
-    // Only process trees within reasonable range
-    if (distSq > 400) return; // 20 units squared
-    
-    // Find apples on this tree
-    const apples = [];
-    tree.traverse(child => {
-      if (child.userData && child.userData.isApple && child.userData.detachable) {
-        apples.push(child);
-      }
-    });
-    
-    // Process apples - separate from traversal to avoid modification issues
-    apples.forEach(apple => {
-      // Small random chance for this apple to detach
-      if (Math.random() < 0.1) { // 10% chance when checking
-        try {
-          // Get world position before removing
-          const worldPos = apple.getWorldPosition(new THREE.Vector3());
-          
-          // Remove from parent
-          apple.parent.remove(apple);
-          
-          // Create and add detached apple
-          const detachedApple = LowPolyGenerator.createDetachedApple(worldPos);
-          scene.add(detachedApple);
-          fallenApples.push(detachedApple);
-          
-          console.log("Apple detached from tree!");
-        } catch (e) {
-          console.error("Error detaching apple:", e);
-        }
-      }
-    });
-  });
-}
 
 // Enhanced debug commands to include physics adjustment
 function setupDebugCommands() {
@@ -630,6 +479,24 @@ function setupDebugCommands() {
   };
   
   console.log("Physics presets: presets.moonGravity(), presets.earthGravity(), presets.jupiterGravity()");
+  
+  // Add trunk height control commands
+  window.setTreeTrunkHeight = (min, max) => {
+    worldConfig.lpTrees.minTrunkHeight = min;
+    worldConfig.lpTrees.maxTrunkHeight = max;
+    worldConfig.lpTrees.useDynamicTrunkHeight = true;
+    console.log(`Tree trunk height set to min: ${min}, max: ${max}`);
+    return { min, max };
+  };
+  
+  window.useTreeRatio = (ratio = 0.65) => {
+    worldConfig.lpTrees.trunkRatio = ratio;
+    worldConfig.lpTrees.useDynamicTrunkHeight = false;
+    console.log(`Switched to trunk ratio mode with ratio: ${ratio}`);
+    return ratio;
+  };
+  
+  console.log("Tree trunk controls: setTreeTrunkHeight(min, max), useTreeRatio(ratio)");
 }
 
 // Add debug display for player state
