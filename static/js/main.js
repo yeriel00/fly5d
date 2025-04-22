@@ -134,9 +134,22 @@ const worldConfig = {
 // Track fallen apples
 const fallenApples = [];
 
-// Modified initEnvironment to export placeOnSphere function
-initEnvironment(scene, 'medium', worldConfig, (placerFunc) => {
+// Track pine tree positions passed from world_objects.js
+let pineTrees = [];
+
+// Modified initEnvironment to export placeOnSphere function and pine tree positions
+initEnvironment(scene, 'medium', worldConfig, (placerFunc, pineTreePositions) => {
   placeOnSphereFunc = placerFunc;
+  
+  // Store pine tree positions for apple tree spacing
+  if (pineTreePositions && pineTreePositions.length > 0) {
+    pineTrees = collidables.filter(obj => 
+      obj.mesh?.name === "PineTree" || 
+      obj.mesh?.userData?.isPineTree
+    );
+    debug(`Received ${pineTrees.length} pine tree positions for spacing`);
+  }
+  
   // After world is built, add low-poly details
   enhanceEnvironment();
 });
@@ -153,13 +166,16 @@ function enhanceEnvironment() {
   debug("Enhancing environment with low-poly details...");
   
   try {
-    // Find existing pine trees from collidables
-    const pineTrees = collidables.filter(obj => 
-      obj.mesh?.name === "PineTree" || 
-      obj.mesh?.userData?.isPineTree
-    );
+    // Find existing pine trees - no longer needed as we get them directly
+    // from the callback now, but kept for compatibility
+    if (pineTrees.length === 0) {
+      pineTrees = collidables.filter(obj => 
+        obj.mesh?.name === "PineTree" || 
+        obj.mesh?.userData?.isPineTree
+      );
+    }
     
-    debug(`Found ${pineTrees.length} existing pine trees to avoid during placement`);
+    debug(`Using ${pineTrees.length} pine trees to avoid during placement`);
     
     // Minimum distance between trees (angular distance on sphere surface)
     // Since we're on a sphere surface, we use angular distance
