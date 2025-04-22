@@ -13,13 +13,20 @@ export default class SphereControls {
     this.pitchLimit = Math.PI / 2 - 0.1;
     this.collidables = options.collidables || [];
     this.playerRadius = options.playerRadius || 1.0;
+    
+    // Add new fixed offset above terrain (player "foot" level)
+    // INCREASED default offset from 0.2 to 0.35
+    this.playerHeightOffset = options.playerHeightOffset || 0.35; // Increased foot clearance
+    // DOUBLE the standard eye height default
+    this.cameraHeight = options.eyeHeight || 6.6; // (3.3 * 2) Camera height relative to player base
 
     // build yaw->pitch->camera hierarchy
     this.yawObject = new THREE.Object3D();
     this.pitchObject = new THREE.Object3D();
     this.yawObject.add(this.pitchObject);
     this.pitchObject.add(camera);
-    camera.position.set(0, options.eyeHeight||1.6, 0);
+    // Use the DOUBLED eye height default for initial camera position
+    camera.position.set(0, options.eyeHeight || 6.6, 0);
 
     // Allow for custom start position direction
     const startDir = options.startPosition || new THREE.Vector3(0, 1, 0).normalize(); // Default to top of planet
@@ -70,10 +77,10 @@ export default class SphereControls {
     this.sliding = false;
     this.currentSurface = null;
     
-    // Physics settings
-    this.slideAngleThreshold = 0.6; // cos of max angle (~53 degrees)
-    this.slideAcceleration = 0.05;  // Sliding force
-    this.slideFriction = 0.98;      // Slide friction (reduces speed)
+    // Physics settings - updated for smoother slope traversal
+    this.slideAngleThreshold = 0.7071; // Cosine of 45 degrees - slide only on steeper slopes
+    this.slideAcceleration = 0.08;  // Increased sliding force for better momentum
+    this.slideFriction = 0.96;      // Lower friction while sliding (was 0.98)
 
     // Physics parameters
     this.jumpStrength = options.jumpStrength || 0.5;
@@ -86,6 +93,11 @@ export default class SphereControls {
     this.maxJumps = options.maxJumps || 2; // Default to double jump
     this.jumpsRemaining = this.maxJumps;
     this.jumpCooldown = 0; // Cooldown timer between jumps
+
+    // Terrain interaction parameters
+    this.terrainSamplingRadius = 0.1; // Radius for terrain sampling
+    this.terrainSamples = 9; // Number of samples to take around player
+    this.maxTerrainAngle = Math.PI / 4; // Maximum angle (45 degrees) to walk up before sliding
   }
 
   getObject() {
@@ -286,38 +298,130 @@ export default class SphereControls {
     if ( this.keys['d'] ) mv.add(right);
 
     if ( mv.lengthSq() > 0 ) {
-      // Apply movement speed - reduce when in air or sliding
+      // Apply movement speed
       const speedMultiplier = (this.onGround && !this.sliding) ? 1.0 : 0.8;
-      mv.normalize().multiplyScalar(this.moveSpeed * speedMultiplier);
+      const moveStep = mv.clone().normalize().multiplyScalar(this.moveSpeed * speedMultiplier); // Calculate the full step vector
 
-      // Calculate new direction on sphere
-      const np = pos.clone().add(mv);
-      const nDir = np.clone().normalize();
-      
-      // Get terrain height at new position
-      const h = this.getTerrainHeight(nDir);
-      
-      // FIXED: Preserve height above terrain when moving
-      // Instead of placing directly on terrain surface, add the current height above terrain
-      const terrainPoint = nDir.clone().multiplyScalar(this.radius + h);
-      const finalPos = terrainPoint.clone().add(
-        nDir.clone().multiplyScalar(Math.max(0, heightAboveTerrain))
-      );
+      // --- REFINED STEEP SLOPE CHECK AHEAD (Foot and Head Level) ---
+      const currentPos = this.yawObject.position;
+      const currentDir = currentPos.clone().normalize();
+      const currentHeight = this.getTerrainHeight(currentDir);
+      const currentTerrainPoint = currentDir.clone().multiplyScalar(this.radius + currentHeight);
+      const currentUp = this.yawObject.up; // Use the current 'up' orientation
 
-      // Only skip items explicitly flagged noCollision (grass)
-      const validCollidables = this.collidables.filter((obj, index) => {
-        if (index === 0) return false;         // planet
-        if (obj.isWater) return false;         // water
-        if (obj.noCollision) return false;     // grass or other no‐collision
-        // must have direction
-        return !!obj.direction;
-      });
+      // --- Foot Level Check ---
+      const lookAheadDistFoot = this.playerRadius * 0.5; // Check distance at foot level
+      const lookAheadVecFoot = moveStep.clone().normalize().multiplyScalar(lookAheadDistFoot);
+      const checkAheadPosFoot = currentPos.clone().add(lookAheadVecFoot);
+      const checkAheadDirFoot = checkAheadPosFoot.clone().normalize();
+      const checkAheadHeightFoot = this.getTerrainHeight(checkAheadDirFoot);
+      const aheadTerrainPointFoot = checkAheadDirFoot.clone().multiplyScalar(this.radius + checkAheadHeightFoot);
+      const heightDiffAheadFoot = checkAheadHeightFoot - currentHeight;
+      const distAheadFoot = lookAheadDistFoot;
 
-      console.log(`Checking ${validCollidables.length} objects for collision`);
+      // --- Head Level Check (Camera Position) ---
+      // Calculate current head position approx.
+      const currentHeadPos = currentPos.clone().add(currentUp.clone().multiplyScalar(this.cameraHeight - this.playerHeightOffset));
+      // INCREASED head look-ahead distance from 0.3 to 0.45 (closer to foot check)
+      const lookAheadDistHead = this.playerRadius * 0.45;
+      const lookAheadVecHead = moveStep.clone().normalize().multiplyScalar(lookAheadDistHead);
+      const checkAheadPosHead = currentHeadPos.clone().add(lookAheadVecHead);
+      const checkAheadDirHead = checkAheadPosHead.clone().normalize();
+      // Get terrain height at the *direction* of the head check point
+      const checkAheadHeightHead = this.getTerrainHeight(checkAheadDirHead);
+      const checkAheadHeadHeightAboveSphereCenter = checkAheadPosHead.length();
+      // Calculate terrain radius at the direction of the head check point
+      const terrainHeightAtHeadCheck = this.radius + checkAheadHeightHead;
 
-      // Example collision loop for trees with adjusted threshold:
+      let steepSlopeAhead = false;
+      let headCollision = false; // Add flag specifically for head collision
+      let slopeNormalAhead = new THREE.Vector3();
+      let slopeAngle = 0;
+
+      // Check foot level slope
+      if (distAheadFoot > 1e-6) {
+          slopeAngle = Math.atan2(heightDiffAheadFoot, distAheadFoot);
+          if (slopeAngle > this.maxTerrainAngle) {
+              steepSlopeAhead = true;
+              // Calculate normal based on foot-level check
+              const slopeVector = aheadTerrainPointFoot.clone().sub(currentTerrainPoint);
+              slopeNormalAhead = new THREE.Vector3().crossVectors(currentUp, slopeVector).normalize();
+              if (slopeNormalAhead.dot(moveStep.clone().normalize()) > 0) slopeNormalAhead.negate();
+              console.log(`Steep slope detected at FEET! Angle: ${(slopeAngle * 180 / Math.PI).toFixed(1)}`);
+          }
+      }
+
+      // Check head level collision *only if foot level is clear*
+      // Check if the head's potential forward position is below the terrain height at that point
+      if (!steepSlopeAhead && checkAheadHeadHeightAboveSphereCenter < terrainHeightAtHeadCheck) {
+          steepSlopeAhead = true; // Still use this flag to trigger projection
+          headCollision = true; // Set specific head collision flag
+          slopeNormalAhead = moveStep.clone().normalize().negate(); // Normal points directly back
+          console.log(`Head collision detected! Head would be at ${checkAheadHeadHeightAboveSphereCenter.toFixed(2)}, terrain is ${terrainHeightAtHeadCheck.toFixed(2)}`);
+          // Note: finalHeight and terrainNormal will be handled in the next block
+      }
+      // --- END STEEP SLOPE & HEAD CHECK ---
+
+      let finalMoveStep = moveStep.clone();
+      let terrainNormal = this.yawObject.up.clone(); // Default to current up
+      let finalHeight = currentHeight; // Default to current height
+
+      if (steepSlopeAhead) {
+          // Treat steep slope OR head collision like a wall - project movement vector
+          const projectedMove = moveStep.clone().projectOnPlane(slopeNormalAhead);
+          finalMoveStep = projectedMove; // Use the adjusted movement
+          console.log("Adjusting movement due to steep slope or head collision.");
+          // Keep current height and normal when hitting a wall
+          finalHeight = currentHeight; // Explicitly use current height
+          terrainNormal = this.yawObject.up; // Maintain current orientation
+      } else {
+          // Slope is climbable, proceed with normal terrain following
+          // ... (rest of the normal terrain following logic remains the same) ...
+          const targetPos = currentPos.clone().add(moveStep); // Use original moveStep for target
+          const targetDir = targetPos.clone().normalize();
+          const sampleDist = 0.1;
+          const hCenter = this.getTerrainHeight(targetDir);
+          const sampleForwardOffset = moveStep.clone().normalize().multiplyScalar(sampleDist);
+          const sampleRightVec = new THREE.Vector3().crossVectors(targetDir, sampleForwardOffset).normalize();
+          const sampleRightOffset = sampleRightVec.multiplyScalar(sampleDist);
+          const dirForward = targetDir.clone().add(sampleForwardOffset).normalize();
+          const dirRight = targetDir.clone().add(sampleRightOffset).normalize();
+          const hForward = this.getTerrainHeight(dirForward);
+          const hRight = this.getTerrainHeight(dirRight);
+          const pCenter = targetDir.clone().multiplyScalar(this.radius + hCenter);
+          const pForward = dirForward.clone().multiplyScalar(this.radius + hForward);
+          const pRight = dirRight.clone().multiplyScalar(this.radius + hRight);
+          const vForward = pForward.sub(pCenter);
+          const vRight = pRight.sub(pCenter);
+
+          if (vForward.lengthSq() > 1e-6 && vRight.lengthSq() > 1e-6) {
+              terrainNormal = new THREE.Vector3().crossVectors(vRight, vForward).normalize();
+              if (terrainNormal.dot(targetDir) < 0) terrainNormal.negate();
+          } else {
+              terrainNormal = targetDir.clone(); // Fallback
+          }
+          finalHeight = hCenter; // Use the height at the target center
+      }
+
+      // Calculate final position based on potentially adjusted move step and height
+      const finalTargetPos = currentPos.clone().add(finalMoveStep);
+      const finalTargetDir = finalTargetPos.clone().normalize();
+      const finalPos = finalTargetDir.multiplyScalar(this.radius + finalHeight + this.playerHeightOffset);
+
+      // Check for collisions with OBJECTS (trees, rocks, etc.)
+      // ... (existing object collision detection code remains the same) ...
       let collide = false;
       let collisionNormal = new THREE.Vector3();
+      const validCollidables = this.collidables.filter((obj, index) => {
+        // Skip terrain and explicitly marked non-collision objects
+        if (index === 0) return false; // planet
+        if (obj.isWater) return false;
+        if (obj.noCollision) return false;
+        return !!obj.direction;
+      });
+      
+      // Check for collisions
+      // ...existing collision detection code...
       for (const obj of validCollidables) {
         const objDir = obj.direction;
         const posDir = finalPos.clone().normalize();
@@ -341,11 +445,20 @@ export default class SphereControls {
       }
 
       if (!collide) {
-        // no collision: move as normal
+        // No object collision: Move player and align to terrain normal (calculated above)
         this.yawObject.position.copy(finalPos);
-        this.yawObject.up.copy(finalPos.clone().normalize());
+        this.yawObject.up.copy(terrainNormal); // Align player rig to terrain (or keep current if hit steep slope/head)
+
+        // Update sliding state based on the normal we are aligned to
+        const verticalDir = finalPos.clone().normalize();
+        const slopeAngleCos = terrainNormal.dot(verticalDir);
+        // Only slide if actually on ground and slope is steep
+        this.sliding = this.onGround && (slopeAngleCos < this.slideAngleThreshold);
+
       } else {
-        // SIDE‑SWIPE: project mv onto the tangent plane of collisionNormal
+        // Handle OBJECT collision response (slide along object)
+        // ... (existing collision response code remains the same) ...
+        // Ensure 'up' is updated during sliding/collision response if position changes
         const mvDir = mv.clone().normalize();
         const projected = mvDir.projectOnPlane(collisionNormal).normalize();
         const slideDir = projected.length() > 0.001 ? projected : mvDir;
@@ -379,8 +492,33 @@ export default class SphereControls {
           console.log("Side‑swipe blocked by collision");
         }
       }
-    }
-
+    } else {
+      // --- NO PLAYER INPUT - Update orientation based on current position if moving due to gravity/sliding ---
+      if (this.velocity.lengthSq() > 1e-6 || this.sliding) {
+         const currentDir = this.yawObject.position.clone().normalize();
+         const currentHeight = this.getTerrainHeight(currentDir);
+         
+         // Simplified normal calculation based on current position (less precise but ok when not actively moving)
+         const sampleF = currentDir.clone().add(new THREE.Vector3(0.1,0,0).normalize()).normalize(); // Arbitrary forward/right
+         const sampleR = currentDir.clone().add(new THREE.Vector3(0,0,0.1).normalize()).normalize();
+         const hF = this.getTerrainHeight(sampleF);
+         const hR = this.getTerrainHeight(sampleR);
+         const pC = currentDir.clone().multiplyScalar(this.radius + currentHeight);
+         const pF = sampleF.clone().multiplyScalar(this.radius + hF);
+         const pR = sampleR.clone().multiplyScalar(this.radius + hR);
+         const vF = pF.sub(pC);
+         const vR = pR.sub(pC);
+         let currentNormal = new THREE.Vector3().crossVectors(vR, vF).normalize();
+         if (currentNormal.dot(currentDir) < 0) currentNormal.negate();
+         
+         this.yawObject.up.copy(currentNormal);
+         
+         // Update sliding state
+         const slopeAngleCos = currentNormal.dot(currentDir);
+         this.sliding = slopeAngleCos < this.slideAngleThreshold;
+      }
+   }
+    
     // After movement, check for surface interaction
     this.checkSurfaceInteraction(upDir);
     
@@ -425,6 +563,10 @@ export default class SphereControls {
       console.log("Jump counter reset - ready to jump again");
     }
     
+    // Ensure camera position is set correctly within the pitch object (relative to yawObject)
+    // This uses the updated this.cameraHeight set in the constructor
+    this.camera.position.set(0, this.cameraHeight, 0);
+
     return true;
   }
 
