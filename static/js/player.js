@@ -20,8 +20,8 @@ export default class Player {
       eyeHeight: 3.8,
       moveSpeed: 2.0,
       lookSpeed: 0.002,
-      jumpStrength: 1.0,
-      gravity: 0.15,
+      jumpStrength: 5.0,
+      gravity: 0.015,
       maxJumps: 2,
       playerRadius: 2.0,
       playerColor: 0x0000FF, // Blue
@@ -89,9 +89,16 @@ export default class Player {
    * Create a visible representation of the player (for debug mode)
    */
   _createDebugBody() {
-    // Simple sphere to represent player collision body
-    const geometry = new THREE.SphereGeometry(this.options.playerRadius, 8, 8);
-    const material = new THREE.MeshBasicMaterial({ 
+    const height = this.options.playerRadius * 2;
+    const geometry = new THREE.CylinderGeometry(
+      this.options.playerRadius, 
+      this.options.playerRadius, 
+      height, 
+      16, // radial segments for smoothness
+      1,  // height segments
+      false
+    );
+    const material = new THREE.MeshBasicMaterial({
       color: this.options.playerColor,
       wireframe: true,
       transparent: true,
@@ -99,10 +106,9 @@ export default class Player {
     });
     
     this.debugBody = new THREE.Mesh(geometry, material);
+    // Offset the cylinder so its base is at y=0 instead of centered
+    this.debugBody.position.set(0, -height / 2, 0);
     this.playerObject.add(this.debugBody);
-    
-    // Position the debug body to match camera offset
-    this.debugBody.position.set(0, -this.options.eyeHeight + this.options.playerRadius, 0);
   }
 
   /**
