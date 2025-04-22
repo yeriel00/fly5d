@@ -8,16 +8,22 @@ import OrientationHelper from './OrientationHelper.js';
 import FXManager from './fx_manager.js';
 import LowPolyGenerator from './low_poly_generator.js';
 // import AudioManager from './audio_manager.js'; // Comment out the audio manager import if you don't need it
+import Player from './player.js';
 
 // --- Constants ---
 const R = 300; // INCREASED radius to 300 for flatter feel
+
+// FIXED: Declare shared variables at the top level
+let player;
+let fxManager;
+let placeOnSphereFunc;
+const clock = new THREE.Clock(); // MOVED: Initialize clock at the top level
 
 // --- Terrain Height Function ---
 const TERRAIN_FREQ = 5.0;
 const TERRAIN_AMP = 2.5; // Update amplitude to match world_objects.js
 
 // Reference to helper function from world_objects.js
-let placeOnSphereFunc; // Declare variable before use
 
 function getTerrainHeight(normPos) {
   const pos = normPos.clone().multiplyScalar(R);
@@ -49,10 +55,9 @@ function onWindowResize() {
   const h = window.innerHeight;
   renderer.setSize(w, h);
   
-  // Update camera aspect if controls are initialized
-  if (controls && controls.camera) {
-    controls.camera.aspect = w / h;
-    controls.camera.updateProjectionMatrix();
+  // Update player camera
+  if (player) {
+    player.resize(w, h);
   }
 }
 
@@ -80,7 +85,7 @@ const worldConfig = {
   lakeDepth: 12.0,           
   waterOffset: 0.5,           
   
-  // Base trees - FIXED: simplified parameters for consistent behavior
+  // Base trees - simplified parameters for consistent behavior
   baseTrees: {
     trunkHeight: 100,      
     trunkSink: 100,         
@@ -304,13 +309,14 @@ const physics = {
   
   // Method to update the controls when these values change
   updateControls() {
-    if (!controls) return;
+    if (!player) return;
     
-    // Update control values
-    controls.gravity = this.gravity;
-    controls.jumpStrength = this.jumpStrength;
-    controls.maxJumps = this.maxJumps;
-    controls.jumpsRemaining = Math.min(controls.jumpsRemaining, this.maxJumps);
+    // Update player physics values
+    player.updatePhysics({
+      gravity: this.gravity,
+      jumpStrength: this.jumpStrength,
+      maxJumps: this.maxJumps
+    });
     
     console.log(`Physics updated: gravity=${this.gravity}, jumpStrength=${this.jumpStrength}, maxJumps=${this.maxJumps}`);
   },
@@ -349,43 +355,48 @@ const physics = {
   },
 };
 
-// --- Initialize Controls ---
-debug("Initializing controls...");
+// *** PLAYER CONFIGURATION ***
+const playerConfig = {
+  startPosition: new THREE.Vector3(0, 1, 0).normalize(), // Position at north pole
+  startElevation: 30,
+  eyeHeight: 3.8,
+  moveSpeed: 2.0,
+  lookSpeed: 0.002,
+  playerRadius: 2.0,
+  debugMode: false, // Set to true to see player collision body
+  sphereRadius: R,
+  getTerrainHeight: getTerrainHeight,
+  collidables: collidables
+};
 
-// UPDATED: Set explicit start position on top of planet
-const startPos = new THREE.Vector3(0, 1, 0).normalize(); // Position at north pole
-const startTerrainHeight = getTerrainHeight(startPos);
-const startElevation = 30; // INCREASED: Much higher elevation to ensure we're outside
+// --- Initialize World & Player ---
+debug("Building world...");
 
-const controls = new SphereControls(
-  new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000),
-  canvas,
-  {
-    sphereRadius: R, // Now correctly using R = 200 to match worldConfig
-    getTerrainHeight: getTerrainHeight,
-    moveSpeed: 2.0,  // DOUBLED for larger world
-    lookSpeed: 0.002,
-    jumpStrength: physics.jumpStrength, // Use from physics object
-    gravity: physics.gravity,           // Use from physics object
-    maxJumps: physics.maxJumps,
-    eyeHeight: 3.8,  // DOUBLED for larger world scale
-    createPlayerBody: true,
-    playerRadius: 2.0,  // DOUBLED for larger world scale
-    collidables: collidables,
-    startPosition: startPos, // Using our pre-defined position
-    startElevation: startElevation // New parameter for extra height at start
-  }
-);
-
-// Add controls object to scene
-scene.add(controls.getObject());
-
-// Add orientation helper
-const orientHelper = new OrientationHelper(controls.getObject());
+// Initialize player after world is built
+initEnvironment(scene, 'medium', worldConfig, (placerFunc) => {
+  placeOnSphereFunc = placerFunc;
+  // After world is built, add low-poly details
+  enhanceEnvironment();
+  
+  // Now initialize the player with the fully built world
+  player = new Player(scene, canvas, {
+    ...playerConfig,
+    // Connect physics to player
+    jumpStrength: physics.jumpStrength,
+    gravity: physics.gravity,
+    maxJumps: physics.maxJumps
+  });
+  
+  //  Initialize FX Manager AFTER player is created, using player's camera
+  fxManager = new FXManager(scene, player.getCamera(), renderer);
+  
+  // Start animation loop after player is created
+  animate();
+});
 
 // Remove particle setup - commenting out
 // Initialize FX Manager AFTER controls are created
-const fxManager = new FXManager(scene, controls.camera, renderer);
+// const fxManager = new FXManager(scene, controls.camera, renderer);
 
 // Comment out audio initialization and usage
 // Initialize audio manager
@@ -397,26 +408,24 @@ const fxManager = new FXManager(scene, controls.camera, renderer);
 onWindowResize();
 
 // --- Animation Loop ---
-const clock = new THREE.Clock();
-
 function animate() {
   const delta = clock.getDelta();
   
-  // Update controls with delta time
-  controls.update(delta);
+  // Update player
+  if (player) {
+    player.update(delta);
+  }
   
-  // Re-orthonormalize player axes each frame
-  orientHelper.update();
-
-  // Render scene
-  renderer.render(scene, controls.camera);
+  // Render scene with player camera
+  if (player) {
+    renderer.render(scene, player.getCamera());
+  }
   
   requestAnimationFrame(animate);
 }
 
 debug("Starting animation loop");
-animate();
-
+// FIXED: Don't call animate() here - we call it after player is created
 
 // Enhanced debug commands to include physics adjustment
 function setupDebugCommands() {
@@ -497,41 +506,49 @@ function setupDebugCommands() {
   };
   
   console.log("Tree trunk controls: setTreeTrunkHeight(min, max), useTreeRatio(ratio)");
-}
-
-// Add debug display for player state
-function showPlayerInfo() {
-  // Get player info from controls
-  const onGround = controls.onGround;
-  const isJumping = controls.isJumping;
-  const jumpsRemaining = controls.jumpsRemaining;
-  const velocity = controls.getVelocity();
-  const speed = velocity.length().toFixed(2);
-  const pos = controls.getObject().position;
-  const height = pos.length() - R;
   
-  // Add gravity analysis
-  const gravDir = pos.clone().normalize().negate();
-  const gravComponent = velocity.dot(gravDir);
-  const isGravityWorking = gravComponent > 0 ? "YES - falling" : "NO - rising";
+  // Update player-related commands
+  window.debugPlayer = () => {
+    if (!player) return console.log("Player not initialized");
+    
+    // Get player info
+    const info = player.getInfo();
+    
+    console.log(`Player: onGround=${info.onGround}, isJumping=${info.isJumping}, jumps=${info.jumpsRemaining}/${info.maxJumps}, speed=${info.speed.toFixed(2)}, height=${info.height.toFixed(2)}`);
+    console.log(`Gravity working? ${info.isGravityWorking ? "YES - falling" : "NO - rising"}, vertical speed=${info.verticalSpeed.toFixed(3)}`);
+    return info;
+  };
   
-  console.log(`Player: onGround=${onGround}, isJumping=${isJumping}, jumps=${jumpsRemaining}/${controls.maxJumps}, speed=${speed}, height=${height.toFixed(2)}`);
-  console.log(`Gravity working? ${isGravityWorking}, vertical speed=${gravComponent.toFixed(3)}`);
+  window.makeJump = () => {
+    if (player) {
+      player.makeJump();
+      console.log("Force jump applied!");
+    }
+  };
+  
+  window.togglePlayerDebug = () => {
+    if (!player) return;
+    playerConfig.debugMode = !playerConfig.debugMode;
+    
+    // Recreate player with new debug setting
+    const oldPos = player.playerObject.position.clone();
+    scene.remove(player.playerObject);
+    
+    player = new Player(scene, canvas, {
+      ...playerConfig,
+      jumpStrength: physics.jumpStrength,
+      gravity: physics.gravity,
+      maxJumps: physics.maxJumps
+    });
+    
+    // Try to restore position
+    player.playerObject.position.copy(oldPos);
+    
+    console.log(`Player debug mode: ${playerConfig.debugMode ? "ON" : "OFF"}`);
+  };
+
+  console.log("Player commands: debugPlayer(), makeJump(), togglePlayerDebug()");
 }
-
-// Add to global for console access
-window.debugPlayer = showPlayerInfo;
-window.makeJump = () => {
-  controls.velocity.addScaledVector(
-    controls.getObject().position.clone().normalize(),
-    1.0
-  );
-  controls.isJumping = true;
-  controls.onGround = false;
-  console.log("Force jump applied!");
-};
-
-console.log("Debug commands: debugPlayer(), makeJump()");
 
 // Call at startup
 setupDebugCommands();
