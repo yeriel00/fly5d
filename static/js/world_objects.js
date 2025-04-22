@@ -218,37 +218,19 @@ export function initEnvironment(scene, quality, config = {}, callback) {
     collidables.push(collidable);
     return true;
   }
-
-  // --- Place Trees, Cabin, etc. (using the updated placeOnSphere) ---
-  // ... (Tree placement loop remains the same) ...
-   const treeCount = config.baseTrees?.count || 20;
-   const trunkHeight = config.baseTrees?.trunkHeight || 10;
-   const trunkSink = config.baseTrees?.trunkSink || 5;
-   const foliageHeight = config.baseTrees?.foliageHeight || 10;
-   for (let i = 0; i < treeCount; i++) {
-       const dir = new THREE.Vector3().randomDirection();
-       const totalTreeHeight = trunkHeight + foliageHeight;
-       const trunkRatio = trunkHeight / totalTreeHeight;
-       const tree = LowPolyGenerator.createPineTree(totalTreeHeight, 4, trunkRatio);
-       placeOnSphere(tree, dir, totalTreeHeight / 2, trunkSink);
-   }
-
-  // ... (Cabin placement remains the same) ...
-   const cabin = new THREE.Group();
-   cabin.name = "ClunkyLogCabin";
-   const wallGeo = new THREE.BoxGeometry(8, 5, 8);
-   const wallMat = new THREE.MeshLambertMaterial({color: 0x8B4513});
-   const wall = new THREE.Mesh(wallGeo, wallMat); wall.position.y = 2.5; cabin.add(wall);
-   const roofGeo = new THREE.ConeGeometry(7, 4, 4);
-   const roofMat = new THREE.MeshLambertMaterial({color: 0xA52A2A});
-   const roof = new THREE.Mesh(roofGeo, roofMat); roof.position.y = 7; roof.rotation.y = Math.PI / 4; cabin.add(roof);
-   const doorGeo = new THREE.BoxGeometry(2, 3, 0.5);
-   const doorMat = new THREE.MeshLambertMaterial({color: 0x4B3621});
-   const door = new THREE.Mesh(doorGeo, doorMat); door.position.set(0, 1.5, 4.01); cabin.add(door);
-   cabin.scale.set(5, 5, 5);
-   const cabinDir = new THREE.Vector3(0.8, 0.2, 0.6).normalize();
-   placeOnSphere(cabin, cabinDir, 8, 2);
-
+  
+  // --- Place Pine Trees (using the updated placeOnSphere) ---
+  const treeCount = config.baseTrees?.count || 20;
+  const trunkHeight = config.baseTrees?.trunkHeight || 10;
+  const trunkSink = config.baseTrees?.trunkSink || 5;
+  const foliageHeight = config.baseTrees?.foliageHeight || 10;
+  for (let i = 0; i < treeCount; i++) {
+      const dir = new THREE.Vector3().randomDirection();
+      const totalTreeHeight = trunkHeight + foliageHeight;
+      const trunkRatio = trunkHeight / totalTreeHeight;
+      const pineTree = LowPolyGenerator.createPineTree(totalTreeHeight, 4, trunkRatio);
+      placeOnSphere(pineTree, dir, totalTreeHeight / 2, trunkSink);
+  }
 
   // Export the placeOnSphere function via callback if provided
   if (callback && typeof callback === 'function') {
