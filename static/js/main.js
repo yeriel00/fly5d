@@ -3,7 +3,8 @@
 // Import Three.js and our custom controls
 import * as THREE from 'three';
 import SphereControls from './SphereControls.js';
-import { initEnvironment, collidables } from './world_objects.js';
+// Import the FULL terrain height function and initEnvironment
+import { initEnvironment, collidables, getFullTerrainHeight } from './world_objects.js';
 import OrientationHelper from './OrientationHelper.js';
 import FXManager from './fx_manager.js';
 import LowPolyGenerator from './low_poly_generator.js';
@@ -11,7 +12,7 @@ import LowPolyGenerator from './low_poly_generator.js';
 import Player from './player.js';
 
 // --- Constants ---
-const R = 300; // INCREASED radius to 300 for flatter feel
+const R = 400; // INCREASED radius from 300 to 400 for more spacious feel
 
 // FIXED: Declare shared variables at the top level
 let player;
@@ -20,19 +21,7 @@ let placeOnSphereFunc;
 const clock = new THREE.Clock(); // MOVED: Initialize clock at the top level
 
 // --- Terrain Height Function ---
-const TERRAIN_FREQ = 5.0;
-const TERRAIN_AMP = 2.5; // Update amplitude to match world_objects.js
-
-// Reference to helper function from world_objects.js
-
-function getTerrainHeight(normPos) {
-  const pos = normPos.clone().multiplyScalar(R);
-  const noise = Math.sin(pos.x * TERRAIN_FREQ / R) * 
-                Math.sin(pos.y * TERRAIN_FREQ / R) * 
-                Math.cos(pos.z * TERRAIN_FREQ / R);
-                
-  return noise * TERRAIN_AMP;
-}
+// REMOVED the basic getTerrainHeight here - we now import getFullTerrainHeight
 
 // Add a debug function to main.js
 function debug(info) {
@@ -77,12 +66,12 @@ debug("Building world...");
 // *****************************************************
 const worldConfig = {
   // Planet settings
-  radius: 300,               
+  radius: 400,               // UPDATED to match new radius
   noiseFrequency: 5.0,        
-  noiseAmplitude: 6.0,       
+  noiseAmplitude: 8.0,       // Increased amplitude
   
   // Lake settings
-  lakeDepth: 12.0,           
+  lakeDepth: 16.0,           // Deeper lake for more variation
   waterOffset: 0.5,           
   
   // Base trees - simplified parameters for consistent behavior
@@ -358,14 +347,15 @@ const physics = {
 // *** PLAYER CONFIGURATION ***
 const playerConfig = {
   startPosition: new THREE.Vector3(0, 1, 0).normalize(), // Position at north pole
-  startElevation: 30,
-  eyeHeight: 3.8,
+  startElevation: 3,
+  eyeHeight: 12, 
   moveSpeed: 2.0,
   lookSpeed: 0.002,
-  playerRadius: 2.0,
+  playerRadius: 6.0, // Collision radius remains the same
   debugMode: false, // Set to true to see player collision body
   sphereRadius: R,
-  getTerrainHeight: getTerrainHeight,
+  // *** USE THE FULL TERRAIN HEIGHT FUNCTION ***
+  getTerrainHeight: getFullTerrainHeight,
   collidables: collidables
 };
 

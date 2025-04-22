@@ -17,7 +17,8 @@ export default class Player {
       // Default options
       startPosition: new THREE.Vector3(0, 1, 0).normalize(),
       startElevation: 30,
-      eyeHeight: 3.8,
+      // DOUBLE the eye height AGAIN
+      eyeHeight: 6.6, // (3.3 * 2)
       moveSpeed: 2.0,
       lookSpeed: 0.002,
       jumpStrength: 5.0,
@@ -26,6 +27,7 @@ export default class Player {
       playerRadius: 2.0,
       playerColor: 0x0000FF, // Blue
       debugMode: false,
+      terrainConformFactor: 0.9, // How strongly camera conforms to terrain (0-1)
     }, options);
 
     // Initialize components
@@ -116,10 +118,26 @@ export default class Player {
    * @param {number} delta - Time since last update
    */
   update(delta) {
-    // Update player controls
+    // Update player controls first
     this.controls.update(delta);
     
-    // Re-orthonormalize player axes
+    // --- SIMPLIFIED CAMERA ORIENTATION ---
+    // Directly use the player object's 'up' vector (calculated in SphereControls based on terrain)
+    // This ensures the camera aligns with the ground the player is standing on.
+    this.camera.up.copy(this.playerObject.up);
+    
+    // We still need to make the camera look where the player is looking (handled by SphereControls pitch/yaw)
+    // but the 'up' direction is now directly tied to the terrain normal under the player.
+    
+    // Remove the call to the complex _updateTerrainTilt method
+    // if (this.controls.onGround && !this._wasJustJumping) {
+    //   this._updateTerrainTilt(delta); // COMMENTED OUT
+    // }
+    
+    // Landing state tracking is no longer needed for camera tilt
+    // if (this.controls.isJumping) { ... } // COMMENTED OUT
+    
+    // Re-orthonormalize player axes - STILL IMPORTANT
     this.orientHelper.update();
   }
 
