@@ -10,6 +10,7 @@ import FXManager from './fx_manager.js';
 import LowPolyGenerator from './low_poly_generator.js';
 // import AudioManager from './audio_manager.js'; // Comment out the audio manager import if you don't need it
 import Player from './player.js';
+import { WaterEffect } from './utils/waterEffect.js';
 
 // --- Constants ---
 const R = 400; // INCREASED radius from 300 to 400 for more spacious feel
@@ -74,7 +75,7 @@ const worldConfig = {
   lakeDepth: 16.0,           // Deeper lake for more variation
   waterOffset: 0.5,           
   
-  // Base trees - simplified parameters for consistent behavior
+  // Pine trees (base trees)
   baseTrees: {
     trunkHeight: 100,      
     trunkSink: 100,         
@@ -82,18 +83,22 @@ const worldConfig = {
     count: 20               
   },
   
-  // Low-poly trees - Adjusted for better trunk visibility
+  // Apple trees (low-poly trees with foliage spheres)
   lpTrees: {
-    height: 45,              
-    sink: 47,                
-    minSize: 40,             
+    height: 65,              
+    sink: 67,                
+    minSize: 65,             
     maxSize: 80,             
     count: 1,                 
     countVariation: 2,
     trunkRatio: 1,            
-    minTrunkHeight: 80,       
-    maxTrunkHeight: 120,      
-    useDynamicTrunkHeight: false
+    minTrunkHeight: 120,       
+    maxTrunkHeight: 160,      
+    useDynamicTrunkHeight: true,
+    foliageScale: 8,       // Base multiplier for foliage size (1.0 = default)
+    foliageMinScale: 12,    // Minimum foliage scale 
+    foliageMaxScale: 16,    // Maximum foliage scale
+    foliageVariation: false   // Whether to apply random variation between min/max
   },
   
   // Low-poly rocks
@@ -110,22 +115,12 @@ const worldConfig = {
   
   // Low-poly grass
   lpGrass: {
-    height: 0,                
-    sink: 0,                  
-    minSize: 1.6,             
-    maxSize: 3.2,             
-    count: 2,                
+    height: 6,                
+    sink: 6,                  
+    minSize: 6,             
+    maxSize: 10,             
+    count: 12,                
     countVariation: 2        
-  },
-  
-  // Cabin - already enormous in world_objects.js after last change
-  cabin: {
-    height: 15.0,            
-    sink: 6.0,              
-    scale: 6.0,             
-    doorScale: 2.5,       
-    windowScale: 3.0,     
-    position: new THREE.Vector3(0.8, 0, 0.6).normalize()
   },
   
   // Clusters
@@ -158,6 +153,33 @@ function enhanceEnvironment() {
   debug("Enhancing environment with low-poly details...");
   
   try {
+    // Find existing pine trees from collidables
+    const pineTrees = collidables.filter(obj => 
+      obj.mesh?.name === "PineTree" || 
+      obj.mesh?.userData?.isPineTree
+    );
+    
+    debug(`Found ${pineTrees.length} existing pine trees to avoid during placement`);
+    
+    // Minimum distance between trees (angular distance on sphere surface)
+    // Since we're on a sphere surface, we use angular distance
+    const minTreeAngleDistance = 0.2; // About 11.5 degrees
+    
+    // Check if a position is too close to pine trees
+    function isTooCloseToTrees(dir) {
+      for (const tree of pineTrees) {
+        const treeDir = tree.direction;
+        // Calculate angular distance (dot product gives cosine of angle)
+        const dot = dir.dot(treeDir);
+        const angle = Math.acos(Math.min(Math.max(dot, -1), 1));
+        
+        if (angle < minTreeAngleDistance) {
+          return true; // Too close
+        }
+      }
+      return false; // Good position
+    }
+    
     // Add clusters of environment objects around the planet
     const clusterCount = worldConfig.clusters.count + 
                          Math.floor(Math.random() * worldConfig.clusters.randomExtra);
@@ -167,27 +189,57 @@ function enhanceEnvironment() {
     const maxRocks = worldConfig.lpRocks.totalCount || 30;
     
     for (let i = 0; i < clusterCount; i++) {
-      // Create random position on sphere
-      const dir = new THREE.Vector3().randomDirection();
+      // Create random position on sphere for cluster
+      let clusterDir;
+      let maxAttempts = 20; // Limit attempts to find a good position
+      let attempts = 0;
       
-      // Add trees in this cluster with direct trunk height control
+      // Try to find a position away from pine trees for the cluster center
+      do {
+        clusterDir = new THREE.Vector3().randomDirection();
+        attempts++;
+      } while (isTooCloseToTrees(clusterDir) && attempts < maxAttempts);
+      
+      // If we couldn't find a good position after max attempts, we'll try less strict placement
+      // for individual objects in the cluster
+      const isGoodClusterPosition = attempts < maxAttempts;
+      
+      if (!isGoodClusterPosition) {
+        debug(`Couldn't find ideal cluster position after ${maxAttempts} attempts. Using fallback placement.`);
+      }
+      
+      // Add apple trees in this cluster with direct trunk height control
       const treeCount = worldConfig.lpTrees.count + 
                        Math.floor(Math.random() * worldConfig.lpTrees.countVariation);
       
       for (let t = 0; t < treeCount; t++) {
-        // Create slight variation in direction
-        const treeDir = dir.clone().add(
-          new THREE.Vector3(
-            (Math.random() - 0.5) * worldConfig.clusters.positionVariation,
-            (Math.random() - 0.5) * worldConfig.clusters.positionVariation,
-            (Math.random() - 0.5) * worldConfig.clusters.positionVariation
-          )
-        ).normalize();
+        // Create base direction with slight variation
+        let treeDir;
+        attempts = 0;
         
+        do {
+          // Create slight variation in direction from cluster center
+          treeDir = clusterDir.clone().add(
+            new THREE.Vector3(
+              (Math.random() - 0.5) * worldConfig.clusters.positionVariation,
+              (Math.random() - 0.5) * worldConfig.clusters.positionVariation,
+              (Math.random() - 0.5) * worldConfig.clusters.positionVariation
+            )
+          ).normalize();
+          
+          attempts++;
+        } while (isTooCloseToTrees(treeDir) && attempts < maxAttempts);
+        
+        // If we still couldn't find a good position, skip this tree
+        if (isTooCloseToTrees(treeDir) && isGoodClusterPosition) {
+          continue;
+        }
+        
+        // If we reach here, either we found a good position or we're using fallback placement
         const treeSize = worldConfig.lpTrees.minSize + 
                         Math.random() * (worldConfig.lpTrees.maxSize - worldConfig.lpTrees.minSize);
         
-        // Trunk height control - use either direct height or ratio
+        // Trunk height control for apple trees
         let trunkHeight = null;
         let trunkRatio = worldConfig.lpTrees.trunkRatio || 0.65;
         
@@ -199,17 +251,44 @@ function enhanceEnvironment() {
           // Also update ratio for any code that might still use it
           trunkRatio = Math.min(1.0, trunkHeight / treeSize);
           
-          console.log(`Creating tree with explicit trunk height: ${trunkHeight.toFixed(1)}, size: ${treeSize.toFixed(1)}`);
+          console.log(`Creating apple tree with explicit trunk height: ${trunkHeight.toFixed(1)}, size: ${treeSize.toFixed(1)}`);
         } else {
           // Use trunk ratio with variation
           trunkRatio = worldConfig.lpTrees.trunkRatio + (Math.random() - 0.5) * 0.2;
-          console.log(`Creating tree with trunk ratio: ${trunkRatio.toFixed(2)}, size: ${treeSize.toFixed(1)}`);
+          console.log(`Creating apple tree with trunk ratio: ${trunkRatio.toFixed(2)}, size: ${treeSize.toFixed(1)}`);
         }
         
-        const tree = LowPolyGenerator.createTree(treeSize, null, null, trunkRatio, trunkHeight);
+        // Calculate foliage scale - either fixed or with variation
+        let foliageScale = worldConfig.lpTrees.foliageScale;
         
-        placeOnSphereFunc(tree, treeDir, 
-                          worldConfig.lpTrees.height, worldConfig.lpTrees.sink);
+        if (worldConfig.lpTrees.foliageVariation) {
+          foliageScale = worldConfig.lpTrees.foliageMinScale + 
+                         Math.random() * (worldConfig.lpTrees.foliageMaxScale - worldConfig.lpTrees.foliageMinScale);
+        }
+        
+        // Create apple tree with custom foliage scale
+        const appleTree = LowPolyGenerator.createTree(
+          treeSize, 
+          null,   // trunk color (use default)
+          null,   // leaves color (use default)
+          trunkRatio, 
+          trunkHeight,
+          foliageScale // New parameter for foliage scale control
+        );
+        
+        console.log(`Creating apple tree with foliage scale: ${foliageScale.toFixed(2)}`);
+        
+        const placed = placeOnSphereFunc(appleTree, treeDir, 
+                              worldConfig.lpTrees.height, worldConfig.lpTrees.sink);
+                              
+        // If successfully placed, add to our pine trees list to avoid for future objects
+        if (placed) {
+          // Find the just-placed tree in collidables (it would be the last one added)
+          const newTreeObj = collidables[collidables.length - 1];
+          if (newTreeObj && newTreeObj.mesh === appleTree) {
+            pineTrees.push(newTreeObj); // Add to our avoidance list
+          }
+        }
       }
       
       // Add rocks in this cluster - USING CLAY-STYLE ROCKS
@@ -220,7 +299,7 @@ function enhanceEnvironment() {
       const rocksToCreate = Math.min(rockCount, maxRocks - totalRocks);
       
       for (let r = 0; r < rocksToCreate; r++) {
-        const rockDir = dir.clone().add(
+        const rockDir = clusterDir.clone().add(
           new THREE.Vector3(
             (Math.random() - 0.5) * worldConfig.clusters.positionVariation,
             (Math.random() - 0.5) * worldConfig.clusters.positionVariation,
@@ -246,7 +325,7 @@ function enhanceEnvironment() {
                         Math.floor(Math.random() * worldConfig.lpGrass.countVariation);
       
       for (let g = 0; g < grassCount; g++) {
-        const grassDir = dir.clone().add(
+        const grassDir = clusterDir.clone().add(
           new THREE.Vector3(
             (Math.random() - 0.5) * worldConfig.clusters.positionVariation,
             (Math.random() - 0.5) * worldConfig.clusters.positionVariation,
@@ -362,9 +441,19 @@ const playerConfig = {
 // --- Initialize World & Player ---
 debug("Building world...");
 
+let waterEffect = null;
+
 // Initialize player after world is built
 initEnvironment(scene, 'medium', worldConfig, (placerFunc) => {
   placeOnSphereFunc = placerFunc;
+  
+  // Create water effect for the lake
+  const waterMesh = collidables.find(obj => obj.isWater)?.mesh;
+  if (waterMesh) {
+    waterEffect = new WaterEffect(waterMesh);
+    debug("Water animation effect created");
+  }
+  
   // After world is built, add low-poly details
   enhanceEnvironment();
   
@@ -400,6 +489,11 @@ onWindowResize();
 // --- Animation Loop ---
 function animate() {
   const delta = clock.getDelta();
+  
+  // Update water animation if it exists
+  if (waterEffect) {
+    waterEffect.update(delta);
+  }
   
   // Update player
   if (player) {
@@ -495,7 +589,7 @@ function setupDebugCommands() {
     return ratio;
   };
   
-  console.log("Tree trunk controls: setTreeTrunkHeight(min, max), useTreeRatio(ratio)");
+  console.log("Tree trunk controls (for apple trees): setTreeTrunkHeight(min, max), useTreeRatio(ratio)");
   
   // Update player-related commands
   window.debugPlayer = () => {
@@ -599,6 +693,24 @@ function setupDebugCommands() {
   };
   
   console.log("- showCollisionShapes(true/false) - Show collision volumes");
+
+  // Add foliage scale control commands
+  window.setFoliageScale = (scale) => {
+    worldConfig.lpTrees.foliageScale = scale;
+    worldConfig.lpTrees.foliageVariation = false;
+    console.log(`Fixed foliage scale set to: ${scale}`);
+    return scale;
+  };
+  
+  window.setFoliageVariation = (min, max) => {
+    worldConfig.lpTrees.foliageMinScale = min;
+    worldConfig.lpTrees.foliageMaxScale = max;
+    worldConfig.lpTrees.foliageVariation = true;
+    console.log(`Foliage scale variation set to: ${min} - ${max}`);
+    return { min, max };
+  };
+  
+  console.log("Foliage controls: setFoliageScale(scale), setFoliageVariation(min, max)");
 }
 
 // Call at startup

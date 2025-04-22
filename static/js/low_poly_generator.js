@@ -6,16 +6,18 @@ import { mergeVertices } from './utils/BufferGeometryUtils.js';  // relative imp
  */
 export default class LowPolyGenerator {
   /**
-   * Create a clay-style tree with more refined proportions
+   * Create a clay-style apple tree with spherical foliage
    * @param {number} height - Total height of the tree
    * @param {THREE.Color|null} trunkColor - Optional custom trunk color
    * @param {THREE.Color|null} leavesColor - Optional custom leaves color
    * @param {number} trunkRatio - Ratio of trunk height to total height (0.0-1.0)
    * @param {number|null} explicitTrunkHeight - Direct trunk height value (overrides ratio if provided)
+   * @param {number} foliageScale - Multiplier for foliage size (1.0 = default size)
    */
-  static createTree(height = 10, trunkColor = null, leavesColor = null, trunkRatio = 0.65, explicitTrunkHeight = null) {
+  static createTree(height = 10, trunkColor = null, leavesColor = null, trunkRatio = 0.65, 
+                   explicitTrunkHeight = null, foliageScale = 1.0) {
     const group = new THREE.Group();
-    group.name = "ClayTree";
+    group.name = "AppleTree"; // Updated name from ClayTree to AppleTree
     
     group.userData = { 
       noCollision: false,
@@ -34,9 +36,13 @@ export default class LowPolyGenerator {
     const baseRadius = height * 0.03;
     const trunkRadius = baseRadius * (1.0 + effectiveRatio * 0.7);
     
-    // Calculate foliage size inversely to effective ratio
-    const foliageScale = 1.0 - (effectiveRatio - 0.65) * 0.6;
-    const foliageRadius = height * 0.25 * Math.max(0.6, foliageScale);
+    // Calculate base foliage size inversely to effective ratio
+    const trunkScaleEffect = 1.0 - (effectiveRatio - 0.65) * 0.6;
+    
+    // Apply custom foliage scale on top of the base calculation
+    // This allows direct control of foliage size independent of trunk
+    const finalFoliageScale = trunkScaleEffect * foliageScale;
+    const foliageRadius = height * 0.25 * Math.max(0.6, finalFoliageScale);
     
     // Create trunk with base at y=0
     const trunkGeo = new THREE.CylinderGeometry(
@@ -66,7 +72,7 @@ export default class LowPolyGenerator {
     trunk.position.y = trunkHeight / 2;
     group.add(trunk);
     
-    // Create foliage spheres
+    // Create foliage spheres with scaled sizes
     const foliagePositions = [
       // Main top foliage - positioned higher on taller trunk
       { 
@@ -109,20 +115,22 @@ export default class LowPolyGenerator {
       group.add(foliageMesh);
     });
     
-    // Store full height in userData for placement
+    // Store foliage scale in userData for reference
     group.userData.totalHeight = trunkHeight + foliageRadius * 2;
+    group.userData.foliageScale = foliageScale;
     
     return group;
   }
   
   /**
-   * Create a clay-style pine tree - for use with base trees
+   * Create a clay-style pine tree with cone-shaped foliage
    * @param {number} height - Total height of the tree
    * @param {number} levels - Number of foliage levels
    * @param {number} trunkRatio - Ratio of trunk height to total height (0.0-1.0)
    */
   static createPineTree(height = 15, levels = 4, trunkRatio = 0.7) {
     const group = new THREE.Group();
+    group.name = "PineTree"; // Added explicit name
     
     // Clay-like colors for pine trees
     const trunkCol = new THREE.Color(0.35, 0.22, 0.15); // Darker trunk
