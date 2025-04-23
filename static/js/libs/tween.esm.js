@@ -751,4 +751,6 @@ TWEEN.Interpolation = {
 	}
 })(this);
 
+// FIXED: Export for ES modules
+// Make TWEEN the default export
 export default TWEEN;

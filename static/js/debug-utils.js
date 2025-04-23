@@ -189,12 +189,73 @@ export function forceSlingshotCharge(player) {
   return true;
 }
 
+/**
+ * Debug projectiles and make them more visible
+ * @param {Object} player - The player object
+ */
+export function debugProjectiles(player) {
+  if (!player?.weaponSystem?.projectileSystem) {
+    return showDebugOverlay("Weapon system not available", { 
+      background: 'rgba(255,0,0,0.7)',
+      duration: 5000
+    });
+  }
+  
+  const projSystem = player.weaponSystem.projectileSystem;
+  
+  // Enable debugging features
+  const activeCount = projSystem.enableDebugging();
+  
+  // Show where the projectiles are
+  if (activeCount === 0) {
+    // Fire a test projectile if none exist
+    const camera = player.getCamera();
+    const cameraPos = new THREE.Vector3();
+    const cameraDir = new THREE.Vector3();
+    
+    camera.getWorldPosition(cameraPos);
+    camera.getWorldDirection(cameraDir);
+    
+    // Create a test projectile
+    const testPos = cameraPos.clone().add(cameraDir.clone().multiplyScalar(5));
+    const testVel = cameraDir.clone().multiplyScalar(40);
+    
+    const testProjectile = projSystem.createProjectile(testPos, testVel, 'apple');
+    console.log("Created test projectile:", testProjectile);
+    
+    // Add visual marker
+    const markerGeo = new THREE.SphereGeometry(2, 16, 12);
+    const markerMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+    const marker = new THREE.Mesh(markerGeo, markerMat);
+    marker.position.copy(testPos);
+    player.scene.add(marker);
+    
+    // Remove marker after 5 seconds
+    setTimeout(() => {
+      player.scene.remove(marker);
+    }, 5000);
+    
+    return showDebugOverlay("Test projectile created. Red sphere marks starting position.", {
+      duration: 5000,
+      position: 'center',
+      background: 'rgba(0,100,0,0.8)'
+    });
+  } else {
+    return showDebugOverlay(`Enhanced visibility for ${activeCount} existing projectiles.`, {
+      duration: 3000,
+      position: 'center',
+      background: 'rgba(0,100,0,0.8)'
+    });
+  }
+}
+
 // Export debug utilities to window for console access
 if (typeof window !== 'undefined') {
   window.debugUtils = {
     showDebugOverlay,
     debugSlingshot,
-    forceSlingshotCharge
+    forceSlingshotCharge,
+    debugProjectiles
   };
 }
 
@@ -203,6 +264,16 @@ if (typeof window !== 'undefined') {
   window.emergencySlingshotReset = function() {
     if (typeof player !== 'undefined') {
       return forceSlingshotCharge(player);
+    } else {
+      console.error("Player not available in global scope");
+      return false;
+    }
+  };
+  
+  // Add direct shortcut for convenience
+  window.debugApples = function() {
+    if (typeof player !== 'undefined') {
+      return debugProjectiles(player);
     } else {
       console.error("Player not available in global scope");
       return false;

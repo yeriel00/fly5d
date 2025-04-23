@@ -10,10 +10,8 @@ import FXManager from './fx_manager.js';
 import LowPolyGenerator from './low_poly_generator.js';
 // import AudioManager from './audio_manager.js'; // Comment out the audio manager import if you don't need it
 import Player from './player.js';
-// Fix the TWEEN import path to use a relative path
-import TWEEN from './libs/tween.esm.js';
-// Add this near the beginning of the file with other imports
-import directInput from './direct-input.js';
+// Import TWEEN.js for smooth animations
+import TWEEN from '/static/js/libs/tween.esm.js';
 
 // --- Constants ---
 const R = 400; // INCREASED radius from 300 to 400 for more spacious feel
@@ -478,12 +476,7 @@ initEnvironment(scene, 'medium', worldConfig, (placerFunc) => {
   fxManager = new FXManager(scene, player.getCamera(), renderer);
   
   // Initialize player UI including weapon controls
-  if (typeof initializePlayerUI === 'function') {
-    initializePlayerUI();
-  } else {
-    console.warn("initializePlayerUI function not defined yet, will be called later");
-    // We'll call it after it's defined
-  }
+  initializePlayerUI();
   
   // Start animation loop after player is created
   animate();
@@ -505,33 +498,13 @@ onWindowResize();
 // --- Animation Loop ---
 function animate() {
   const delta = clock.getDelta();
-  
-  // FIXED: Log animation frame occasionally for debug
-  const now = Date.now();
-  if (now % 1000 < 20) { // Log approximately once per second
-    console.log(`🔄 Animation frame, delta: ${delta.toFixed(4)}`);
-  }
-  
+
   // Update TWEEN animations
   TWEEN.update();
-  
+
   // Update player
   if (player) {
     player.update(delta);
-    
-    // FIXED: Add explicit check for charging state
-    const weaponState = player.getWeaponState();
-    if (weaponState && weaponState.isCharging) {
-      const powerMeter = document.getElementById('power-meter');
-      const powerFill = document.getElementById('power-fill');
-      
-      if (powerMeter && powerFill && weaponState.chargeState) {
-        // Force power meter to be visible during charging
-        powerMeter.style.display = 'block';
-        const powerPercentage = Math.min(100, weaponState.chargeState.power * 100);
-        powerFill.style.width = `${powerPercentage}%`;
-      }
-    }
   }
   
   // Render scene with player camera
@@ -539,7 +512,6 @@ function animate() {
     renderer.render(scene, player.getCamera());
   }
   
-  // Always continue the animation loop
   requestAnimationFrame(animate);
 }
 
@@ -1105,39 +1077,77 @@ function setupDebugCommands() {
   fixJump()              // Reset ALL jump state
   debugKeys()            // Monitor key events (30 seconds)
   `);
+
+  // FIXED: Add commands to fix projectile issues
+  window.fixProjectiles = () => {
+    if (!player?.weaponSystem?.projectileSystem) {
+      return "Projectile system not available";
+    }
+    
+    const system = player.weaponSystem.projectileSystem;
+    
+    // Clear all existing projectiles
+    console.log(`Clearing ${system.projectiles.length} projectiles`);
+    system.clear();
+    
+    // Reset the projectile pool
+    system.projectilePool = [];
+    
+    // Give the player fresh ammo
+    player.addAmmo('apple', 20);
+    player.addAmmo('goldenApple', 5);
+    
+    console.log("✅ Projectile system reset! Fresh ammo added.");
+    return "Projectile system fixed";
+  };
+  
+  // Add a debug toggle for the projectile system
+  window.debugProjectileSystem = (enable = true) => {
+    if (!player?.weaponSystem) {
+      return "Weapon system not available";
+    }
+    
+    player.weaponSystem.setDebug(enable);
+    return `Projectile system debugging ${enable ? 'enabled' : 'disabled'}`;
+  };
+  
+  // Add both commands to the console help
+  console.log(`
+  // *****************************************
+  // ***** PROJECTILE FIX COMMANDS *****
+  // *****************************************
+  fixProjectiles()           // Reset projectile system if apples stop appearing
+  debugProjectileSystem()    // Enable detailed logging of projectile actions
+  `);
 }
 
 // Call at startup
 setupDebugCommands();
 
 // Add event listeners for weapon actions
-// Replace setupWeaponControls function with this much simpler version
 function setupWeaponControls() {
-  console.log("⚔️ Setting up weapon controls with DirectInputHandler");
-  
-  // Connect the direct input handler to our weapon system
-  directInput.onLeftDown(() => {
-    console.log("🏹 Starting weapon charge");
-    if (player) {
-      const result = player.fireWeapon();
-      console.log("Weapon charge started:", result);
+  // Mouse controls for slingshot
+  document.addEventListener('mousedown', (e) => {
+    if (e.button === 0 && player) { // Left mouse button
+      player.fireWeapon();
+      
+      // Show feedback in debug console
+      const weaponState = player.getWeaponState();
+      console.log(`Charging ${weaponState.currentWeapon}...`);
     }
   });
   
-  directInput.onLeftUp((data) => {
-    console.log(`🔥 Releasing weapon after ${data.holdTime}ms`);
-    if (player) {
+  document.addEventListener('mouseup', (e) => {
+    if (e.button === 0 && player) { // Left mouse button
       const result = player.releaseWeapon();
-      console.log("Weapon fired:", result ? "Success" : "Failed");
+      
       if (result && result.projectile) {
         console.log(`Fired ${result.projectile.type} with power ${result.power.toFixed(2)}`);
-      } else {
-        console.log("No projectile was created on release");
       }
     }
   });
   
-  // Add weapon switching with Q key
+  // Weapon switching
   document.addEventListener('keydown', (e) => {
     if (e.key === 'q' && player) {
       const oldState = player.getWeaponState();
@@ -1148,69 +1158,7 @@ function setupWeaponControls() {
         console.log(`Switched from ${oldState.currentWeapon} to ${newState.currentWeapon}`);
       }
     }
-    
-    // Space as backup fire button
-    if (e.key === ' ' && player) {
-      console.log("SPACE pressed - Starting backup charge");
-      player.fireWeapon();
-    }
   });
-  
-  document.addEventListener('keyup', (e) => {
-    // Space as backup release
-    if (e.key === ' ' && player) {
-      console.log("SPACE released - Releasing backup charge");
-      player.releaseWeapon();
-    }
-  });
-  
-  // Add a container to show charge level on screen at all times
-  const chargeDebug = document.createElement('div');
-  chargeDebug.id = 'charge-debug';
-  chargeDebug.style.position = 'fixed';
-  chargeDebug.style.bottom = '60px'; 
-  chargeDebug.style.left = '50%';
-  chargeDebug.style.transform = 'translateX(-50%)';
-  chargeDebug.style.background = 'rgba(0,0,0,0.7)';
-  chargeDebug.style.color = 'white';
-  chargeDebug.style.padding = '5px 10px';
-  chargeDebug.style.borderRadius = '3px';
-  chargeDebug.style.fontFamily = 'monospace';
-  chargeDebug.style.fontSize = '14px';
-  chargeDebug.textContent = 'CLICK & HOLD to charge';
-  document.body.appendChild(chargeDebug);
-  
-  // Function to continuously update debug info
-  function updateChargeDebug() {
-    if (!player || !player.weaponSystem || !player.weaponSystem.projectileSystem) {
-      chargeDebug.textContent = 'Weapon system not ready';
-      requestAnimationFrame(updateChargeDebug);
-      return;
-    }
-    
-    const state = player.weaponSystem.projectileSystem.slingshotState;
-    
-    if (state && state.charging) {
-      const power = Math.floor(state.power * 100);
-      chargeDebug.textContent = `CHARGING: ${power}% (${state.chargeSpeed.toFixed(1)}x)`;
-      chargeDebug.style.color = power > 90 ? '#ff0000' : 
-                               power > 60 ? '#ffaa00' : 
-                               power > 30 ? '#ffff00' : '#ffffff';
-    } else if (directInput.isLeftMouseDown()) {
-      chargeDebug.textContent = '🔄 CLICK IS DOWN BUT NOT CHARGING!';
-      chargeDebug.style.color = '#ff0000';
-    } else {
-      chargeDebug.textContent = 'CLICK & HOLD to charge';
-      chargeDebug.style.color = '#ffffff';
-    }
-    
-    requestAnimationFrame(updateChargeDebug);
-  }
-  
-  // Start the debug update loop
-  updateChargeDebug();
-  
-  console.log("Weapon controls setup complete");
 }
 
 // Add this call after player initialization
@@ -1267,31 +1215,14 @@ function initializePlayerUI() {
       weaponState.currentWeapon === 'slingshot' ? weaponState.ammo.apple : weaponState.ammo.goldenApple
     }`;
     
-    // FIXED: Update power meter more responsively with debugging
+    // Update power meter
     if (weaponState.isCharging && weaponState.chargeState) {
       powerMeter.style.display = 'block';
-      // Calculate percentage fill based on power
-      const powerPercentage = Math.min(100, weaponState.chargeState.power * 100);
-      
-      // Force style change to ensure it shows correctly
-      powerFill.style.width = `${powerPercentage}%`;
-      
-      // Add a data attribute for debugging purposes
-      powerMeter.setAttribute('data-power', powerPercentage.toFixed(1) + '%');
-      
-      // FIXED: Add color animation based on charge level with dynamic styling
-      if (powerPercentage > 80) {
-        powerFill.style.background = '#ff0000'; // Full red at max charge
-      } else if (powerPercentage > 50) {
-        powerFill.style.background = '#ff6600'; // Orange for medium-high charge
-      } else {
-        powerFill.style.background = '#ffcc00'; // Yellow for lower charge
-      }
+      powerFill.style.width = `${weaponState.chargeState.power * 100}%`;
     } else {
       powerMeter.style.display = 'none';
     }
     
-    // FIXED: Ensure smooth updates
     requestAnimationFrame(updateUI);
   }
   
@@ -1390,8 +1321,7 @@ function initializePlayerUI() {
     const testPosition = cameraPos.clone().addScaledVector(cameraDir, 2);
     const testVelocity = cameraDir.clone().multiplyScalar(40);
     
-    // Create and store the projectile for testing
-    player.weaponSystem.projectileSystem.createProjectile(
+    const projectile = player.weaponSystem.projectileSystem.createProjectile(
       testPosition,
       testVelocity,
       'apple'
@@ -1556,10 +1486,11 @@ function initializePlayerUI() {
         trunkHelper.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), obj.direction);
         trunkHelper.userData = { isCollisionHelper: true };
         scene.add(trunkHelper);
+        
         // Foliage visualization if it's an apple tree (green wireframe)
         if (obj.mesh.name === "AppleTree" || obj.mesh.userData?.isTree) {
           const foliageRadius = obj.radius * 0.6; // 60% of the original collision radius
-          // Calculate height but only use radius for sphere geometry
+          const foliageHeight = obj.radius * 2;
           const foliageGeometry = new THREE.SphereGeometry(foliageRadius, 8, 6);
           const foliageMaterial = new THREE.MeshBasicMaterial({
             color: 0x00ff00,
@@ -1609,7 +1540,8 @@ function initializePlayerUI() {
     
     camera.getWorldPosition(cameraPos);
     camera.getWorldDirection(cameraDir);
-    // Create test projectile position
+    
+    // Create test projectile
     const testPos = cameraPos.clone().addScaledVector(cameraDir, 2); // Start in front of camera
     const projectileSystem = player.weaponSystem.projectileSystem;
     
@@ -1745,12 +1677,12 @@ function initializePlayerUI() {
     
     // Report results
     console.log(`Created ${points.length} test points around object`);
+    
     // Create test projectiles from each point toward the object
     points.forEach(point => {
-      // Direction calculation not needed for visualization
-      // We just need to create a line from point to object
+      // Direction from point to object center
+      const dirToObj = objPos.clone().sub(point.position).normalize();
       
-      // Create line showing test ray
       // Create line showing test ray
       const lineGeo = new THREE.BufferGeometry().setFromPoints([
         point.position,
@@ -1783,6 +1715,7 @@ function initializePlayerUI() {
     // Add cleanup function
     return "Collision test grid created";
   };
+  
   // Add command to adjust projectile radius
   window.adjustProjectileRadius = (multiplier = 1.0) => {
     if (!player?.weaponSystem?.projectileSystem) return "Projectile system not available";
@@ -1791,10 +1724,11 @@ function initializePlayerUI() {
     player.weaponSystem.projectileSystem.options.projectileRadius = oldRadius * multiplier;
     
     const newRadius = player.weaponSystem.projectileSystem.options.projectileRadius;
-    return `Projectile radius adjusted from ${oldRadius.toFixed(2)} to ${newRadius.toFixed(2)}`;
-  };
-  
-  // Add commands to console help
+    
+    console.log(`Adjusted projectile radius: ${oldRadius} -> ${newRadius}`);
+    return `Projectile radius set to ${newRadius.toFixed(2)}`;
+  }; // FIXED: Added missing semicolon and closing brace
+
   // Add commands to console help
   console.log(`
   // *****************************************
@@ -2076,162 +2010,4 @@ function initializePlayerUI() {
   improveTreeBounce()         // Apply better bounce physics for tree collisions
                               // Makes apples bounce realistically off tree trunks
   `);
-
-  // Add a high-speed projectile mode to the initializePlayerUI function
-  window.superSnappyApples = (level = 'medium') => {
-    if (!player?.weaponSystem?.projectileSystem) 
-      return "Projectile system not available";
-    
-    const system = player.weaponSystem.projectileSystem;
-    
-    // Different presets based on desired intensity
-    const presets = {
-      medium: {
-        speed: 65,
-        bounce: 0.75,
-        spin: 1.5
-      },
-      high: {
-        speed: 85,
-        bounce: 0.8,
-        spin: 2.0
-      },
-      extreme: {
-        speed: 120,
-        bounce: 0.85,
-        spin: 3.0
-      }
-    };
-    
-    // Use selected preset or default to medium
-    const preset = presets[level] || presets.medium;
-    
-    // Apply super snappy settings
-    system.options.projectileSpeed = preset.speed;
-    system.options.bounceFactor = preset.bounce;
-    
-    // Modify spin multiplier for all new projectiles
-    system.spinMultiplier = preset.spin;
-    
-    // Enable debug visualization for bounce effects
-    system.debug = true;
-    
-    console.log(`🚀 SUPER SNAPPY APPLES ACTIVATED - ${level.toUpperCase()} INTENSITY`);
-    console.log(`✓ Projectile speed increased to ${preset.speed}`);
-    console.log(`✓ Bounce factor increased to ${preset.bounce}`);
-    console.log(`✓ Spin multiplier set to ${preset.spin}×`);
-    console.log(`✓ Visual bounce effects enabled`);
-    
-    return `Super Snappy Apples: ${level.toUpperCase()} mode activated!`;
-  };
-  
-  // Add apple trail command for extra visual flair
-  window.enableAppleTrail = (enable = true) => {
-    if (!player?.weaponSystem?.projectileSystem) 
-      return "Projectile system not available";
-    
-    const system = player.weaponSystem.projectileSystem;
-    system.enableTrail = enable;
-    
-    console.log(`Apple motion trails ${enable ? 'ENABLED' : 'DISABLED'}`);
-    return `Apple motion trails ${enable ? 'enabled' : 'disabled'}`;
-  };
-  
-  // Add the commands to the console help
-  console.log(`
-  // *****************************************
-  // ***** SUPER SNAPPY APPLE PHYSICS *****
-  // *****************************************
-  superSnappyApples('medium')   // Apply faster, bouncier apple physics (default)
-  superSnappyApples('high')     // Even faster and bouncier apples
-  superSnappyApples('extreme')  // EXTREMELY fast and bouncy apples!
-  
-  enableAppleTrail(true)        // Add motion trails to flying apples
-  `);
 }
-
-// Add a special debug command for checking the slingshot charging
-window.debugSlingshot = () => {
-  if (!player?.weaponSystem?.projectileSystem) {
-    return "Weapon system not available";
-  }
-  
-  const slingshotState = player.weaponSystem.projectileSystem.slingshotState;
-  console.log("Slingshot state:", {
-    charging: slingshotState.charging,
-    power: slingshotState.power.toFixed(4),
-    maxPower: slingshotState.maxPower,
-    chargeSpeed: slingshotState.chargeSpeed
-  });
-  
-  // Force the power meter to be visible
-  const powerMeter = document.getElementById('power-meter');
-  const powerFill = document.getElementById('power-fill');
-  if (powerMeter && powerFill) {
-    powerMeter.style.display = 'block';
-    const powerPercentage = Math.min(100, slingshotState.power * 100);
-    powerFill.style.width = `${powerPercentage}%`;
-  }
-  
-  return slingshotState;
-};
-
-// Add a command to test mouse events
-window.testMouseEvents = () => {
-  console.log("Click and hold anywhere to test mouse event handling");
-  
-  // Create test overlay
-  const div = document.createElement('div');
-  div.style.position = 'fixed';
-  div.style.top = '10px';
-  div.style.left = '10px';
-  div.style.background = 'rgba(0,0,0,0.7)';
-  div.style.color = 'white';
-  div.style.padding = '10px';
-  div.style.fontFamily = 'monospace';
-  div.style.zIndex = '1000';
-  div.id = 'mouse-test-overlay';
-  div.innerHTML = 'MOUSE TEST: Click and hold left button...';
-  
-  document.body.appendChild(div);
-  
-  // Track the state
-  const state = {
-    down: false,
-    startTime: 0,
-    elapsed: 0
-  };
-  
-  // Set up test handlers
-  const onDown = (e) => {
-    if (e.button === 0) {
-      state.down = true;
-      state.startTime = Date.now();
-      div.innerHTML = 'MOUSE DOWN - Holding...';
-      div.style.background = 'rgba(255,0,0,0.7)';
-    }
-  };
-  
-  const onUp = (e) => {
-    if (e.button === 0) {
-      state.elapsed = Date.now() - state.startTime;
-      state.down = false;
-      div.innerHTML = `MOUSE UP - Held for: ${state.elapsed}ms`;
-      div.style.background = 'rgba(0,255,0,0.7)';
-    }
-  };
-  
-  // Add the test handlers
-  document.addEventListener('mousedown', onDown);
-  document.addEventListener('mouseup', onUp);
-  
-  // Remove the test after 10 seconds
-  setTimeout(() => {
-    document.removeEventListener('mousedown', onDown);
-    document.removeEventListener('mouseup', onUp);
-    document.body.removeChild(div);
-    console.log("Mouse test ended");
-  }, 10000);
-  
-  return "Test started - click and hold for 10 seconds";
-};

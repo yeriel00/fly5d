@@ -54,7 +54,8 @@ export default class Player {
     });
     
     // Set up weapon models
-    this.weaponSystem.setupModel(this.camera);
+    // FIXED: Remove the call to setupModel which doesn't exist
+    // this.weaponSystem.setupModel(this.camera);
     
     // Weapon input state
     this.weaponInput = {
@@ -262,22 +263,38 @@ export default class Player {
    * Fire the weapon
    */
   fireWeapon() {
-    if (!this.weaponInput.firing) {
-      this.weaponInput.firing = true;
-      return this.weaponSystem.startCharge();
-    }
-    return false;
+    if (!this.weaponSystem) return false;
+    
+    console.log("Player#fireWeapon called"); // Debug logging
+    
+    // FIXED: Changed startCharge to startCharging to match WeaponSystem
+    const started = this.weaponSystem.startCharging();
+    return started;
   }
 
   /**
    * Release the weapon
    */
   releaseWeapon() {
-    if (this.weaponInput.firing) {
-      this.weaponInput.firing = false;
-      return this.weaponSystem.releaseCharge();
-    }
-    return null;
+    if (!this.weaponSystem) return null;
+    
+    console.log("Player#releaseWeapon called"); // Debug logging
+    
+    // FIXED: Changed releaseCharge to releaseShot to match WeaponSystem
+    const result = this.weaponSystem.releaseShot(this.playerObject.position);
+    return result;
+  }
+
+  /**
+   * Cancel weapon charging (mouse leaves window)
+   */
+  cancelWeapon() {
+    if (!this.weaponSystem) return;
+    
+    console.log("Player#cancelWeapon called"); // Debug logging
+    
+    // Cancel charging - this method name is correct
+    this.weaponSystem.cancelCharge();
   }
 
   /**
