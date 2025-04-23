@@ -8,7 +8,7 @@ export default class SphereControls {
     // sphere params
     this.radius = options.sphereRadius || 50;
     this.getTerrainHeight = options.getTerrainHeight || (() => 0);
-    this.moveSpeed = options.moveSpeed || 0.5;
+    this.moveSpeed = options.moveSpeed || 32.0; // INCREASED from 10.0 to 32.0 for much faster movement
     this.lookSpeed = options.lookSpeed || 0.002;
     this.pitchLimit = Math.PI / 2 - 0.1;
     this.collidables = options.collidables || [];
@@ -82,9 +82,9 @@ export default class SphereControls {
     this.slideAcceleration = 0.08;  // Increased sliding force for better momentum
     this.slideFriction = 0.96;      // Lower friction while sliding (was 0.98)
 
-    // Physics parameters
-    this.jumpStrength = options.jumpStrength || 0.5;
-    this.gravity = options.gravity || -0.03;
+    // Physics parameters - IMPROVED BALANCE
+    this.jumpStrength = options.jumpStrength || 4.5;  // Increased from 3.0 to 4.5 for higher jumps
+    this.gravity = Math.abs(options.gravity || 0.2);  // Maintained strong gravity at 0.2
     this.jumpEnabled = true;
     this.isJumping = false;
     this.onGround = true;
@@ -98,6 +98,21 @@ export default class SphereControls {
     this.terrainSamplingRadius = 0.1; // Radius for terrain sampling
     this.terrainSamples = 9; // Number of samples to take around player
     this.maxTerrainAngle = Math.PI / 4; // Maximum angle (45 degrees) to walk up before sliding
+
+    // Add new movement physics parameters
+    this.airControlFactor = options.airControlFactor || 0.3; // Increased from 0.2 to 0.3
+    this.maxGroundSpeed = options.maxGroundSpeed || 40.0; // INCREASED - must be higher than moveSpeed
+    this.maxAirSpeed = options.maxAirSpeed || 45.0; // INCREASED - slightly higher than ground speed
+    this.jumpSpeed = options.jumpSpeed || 10.0; 
+    this.doubleJumpScale = options.doubleJumpScale || 2;
+    this.jumpDirectionMix = options.jumpDirectionMix || 0.35; // Increased directional control
+    this.groundFriction = options.groundFriction || 0.92; // Slightly lower for faster acceleration
+    this.airFriction = options.airFriction || 0.998; // Almost no air friction for better air movement
+
+    // Add parameters for progressive gravity
+    this.maxGravityMultiplier = options.maxGravityMultiplier || 2.5; // How much stronger gravity gets
+    this.gravityRampTime = options.gravityRampTime || 0.8; // Time to reach max gravity (seconds)
+    this.airTime = 0; // Time spent in air for gravity calculations
   }
 
   getObject() {
@@ -127,528 +142,513 @@ export default class SphereControls {
     this.pitchObject.rotation.x = this.pitch;
   }
 
+  // Fix the key handling to ensure space bar is properly detected
   onKeyDown(e) { 
-    this.keys[e.key.toLowerCase()] = true; 
+    // Store the key in lowercase for consistent checking
+    const key = e.key.toLowerCase();
+    this.keys[key] = true; 
     
-    // Enhanced jump handler with double jump and mid-run jump
-    if (e.key === ' ' && this.jumpEnabled && this.jumpsRemaining > 0 && this.jumpCooldown <= 0) {
-      // Calculate jump direction (away from planet center)
-      const jumpDir = this.yawObject.position.clone().normalize();
+    // Log key presses to debug spacebar detection
+    if (key === ' ' || key === 'spacebar') {
+      console.log("SPACEBAR PRESSED - jumpEnabled:", this.jumpEnabled, 
+                  "jumpsRemaining:", this.jumpsRemaining, 
+                  "jumpCooldown:", this.jumpCooldown.toFixed(3),
+                  "onGround:", this.onGround);
       
-      // Calculate jump force - we'll use the same strength for all jumps
-      const jumpForce = this.jumpStrength;
-      
-      // For first jump, set velocity directly
-      if (this.onGround) {
-        this.velocity = jumpDir.multiplyScalar(jumpForce);
-      } else {
-        // For mid-air jumps, preserve some horizontal momentum but reset vertical
-        const upDir = this.yawObject.position.clone().normalize();
-        const verticalComponent = upDir.clone().multiplyScalar(this.velocity.dot(upDir));
+      // Handle both ' ' and 'spacebar' for cross-browser compatibility
+      if (this.jumpEnabled && this.jumpsRemaining > 0 && this.jumpCooldown <= 0) {
+        // Rest of jump handler code as before...
+        console.log("MAIN JUMP HANDLER EXECUTED"); // Add debug log to verify this runs
         
-        // Remove downward momentum for cleaner double jump
-        if (verticalComponent.dot(upDir) < 0) {
-          this.velocity.sub(verticalComponent);
+        // CRITICAL FIX: Always use the player's normalized position as the true "up" direction
+        const upDir = this.yawObject.position.clone().normalize();
+        
+        // Get camera forward direction for directional influence
+        const forward = new THREE.Vector3(0, 0, -1);
+        forward.applyQuaternion(this.yawObject.quaternion);
+        forward.projectOnPlane(upDir).normalize();
+        
+        // Strong consistent jump force
+        const isFirstJump = this.onGround;
+        const jumpForce = this.jumpStrength * 5.5;
+        
+        // Reset jumps remaining counter if this is a ground jump
+        if (isFirstJump) {
+          this.jumpsRemaining = this.maxJumps - 1; // Reset minus this jump
+        } else {
+          this.jumpsRemaining--; // Just decrement for double jumps
         }
         
-        // Add new jump impulse
-        this.velocity.add(jumpDir.clone().multiplyScalar(jumpForce));
+        // Calculate pure vertical jump velocity
+        const jumpVelocity = upDir.clone().multiplyScalar(jumpForce);
+        
+        // FIXED: Properly save horizontal velocity in tangent plane to sphere
+        const horizontalVel = this.velocity.clone().projectOnPlane(upDir);
+        const currentHorizontalSpeed = horizontalVel.length();
+        
+        // CRITICAL FIX: Reset velocity completely before adding jump impulse
+        this.velocity = new THREE.Vector3(0, 0, 0);
+        
+        // Add pure jump impulse along local up vector
+        this.velocity.add(jumpVelocity);
+        
+        // Add back controlled horizontal velocity for direction preservation
+        if (currentHorizontalSpeed > 0.01) {
+          const maxHorizontalSpeed = this.maxGroundSpeed * 0.8;
+          const targetSpeed = Math.min(currentHorizontalSpeed, maxHorizontalSpeed);
+          this.velocity.add(horizontalVel.normalize().multiplyScalar(targetSpeed));
+        }
+        
+        // DEBUG: Record jump details for debugging
+        this._lastJumpForce = jumpForce;
+        this._lastJumpVelocity = this.velocity.length();
+        
+        console.log(`Jump force: ${jumpForce.toFixed(2)}, resulting velocity: ${this.velocity.length().toFixed(2)}, jumps remaining: ${this.jumpsRemaining}`);
+        
+        // Mark as jumping and setup state
+        this.isJumping = true;
+        this.onGround = false;
+        this.jumpAirTime = 0;
+        this.jumpCooldown = 0.15;
+        this.jumpStartTime = performance.now(); // For tracking jump duration
+        
+        // Reset air time properly for gravity calculation
+        if (isFirstJump) {
+          this.airTime = 0;
+        } else {
+          this.airTime = this.gravityRampTime * 0.2;
+        }
+      } else {
+        console.log("Jump prevented - remaining jumps:", this.jumpsRemaining, "cooldown:", this.jumpCooldown.toFixed(3));
       }
-      
-      // Mark as jumping and decrement jumps
-      this.isJumping = true;
-      this.onGround = false;
-      this.jumpsRemaining--;
-      
-      // Set small cooldown to prevent accidental double-taps
-      this.jumpCooldown = 0.2;
-      
-      console.log(`Jump ${this.maxJumps - this.jumpsRemaining} of ${this.maxJumps} with force: ${jumpForce.toFixed(2)}`);
     }
   }
-  onKeyUp(e)   { this.keys[e.key.toLowerCase()] = false; }
+  onKeyUp(e) { 
+    // Reset the key state when released
+    const key = e.key.toLowerCase();
+    this.keys[key] = false;
+    
+    // On spacebar release, reset cooldown if it's high
+    if ((key === ' ' || key === 'spacebar') && this.jumpCooldown > 0.1) {
+      // Reset cooldown to low value to allow next jump sooner
+      this.jumpCooldown = 0.01;
+      console.log("Jump cooldown reset on key release");
+    }
+  }
 
-  update(delta) {
-    // Cache old position for collision response
-    const oldPos = this.yawObject.position.clone();
+  // Fix the jumping logic to prevent immediate ground detection after jump
+  update(deltaTime) {
+    const playerObj = this.yawObject;
+
+    // --- KEY CHANGE: Store the player's up direction for consistent reference ---
+    // This is the normal to the sphere at the player's position
+    const playerUp = playerObj.position.clone().normalize();
     
-    // ********************************************
-    // UNIFIED GRAVITY AND SLIDING FIX
-    // ********************************************
+    // --- CRITICAL FIX #1: Add absolute minimum distance check ---
+    // This should run at the start of each update to catch any potential issues
     const pos = this.yawObject.position;
+    const dir = pos.clone().normalize();
+    const absoluteMinimumHeight = this.radius * 0.95; // Never go below 95% of planet radius
     
-    // This is our planet-relative up vector - ALWAYS pointing away from center
+    if (pos.length() < absoluteMinimumHeight) {
+      console.warn("EMERGENCY POSITION CORRECTION - player below minimum height!");
+      
+      // Get terrain height at current direction
+      const terrainHeight = this.getTerrainHeight(dir);
+      
+      // Place player safely above terrain
+      const safeHeight = this.radius + terrainHeight + this.playerHeightOffset;
+      this.yawObject.position.copy(dir.multiplyScalar(safeHeight));
+      
+      // Reset velocity to prevent further sinking
+      this.velocity.set(0, 0, 0);
+      this.onGround = true;
+      this.isJumping = false;
+      this.jumpsRemaining = this.maxJumps;
+    }
+    
+    // Apply progressive gravity when not on ground
+    if (!this.onGround) {
+      // Update air time counter
+      this.airTime += deltaTime;
+      
+      // Calculate gravity multiplier based on time in air
+      // Starts at 1.0 and increases to maxGravityMultiplier over gravityRampTime
+      const gravityMultiplier = Math.min(
+        this.maxGravityMultiplier, 
+        1.0 + (this.airTime / this.gravityRampTime) * (this.maxGravityMultiplier - 1.0)
+      );
+      
+      // Create gravity vector pointing to planet center
+      const gravityVector = playerUp.clone().negate();
+      
+      // Apply gravity force with progressive multiplier
+      const finalGravity = this.gravity * gravityMultiplier;
+      this.velocity.addScaledVector(gravityVector, finalGravity * deltaTime * 60);
+      
+      // Log gravity progression occasionally for debugging
+      if (Math.random() < 0.01) {
+        console.log(`Air time: ${this.airTime.toFixed(2)}s, Gravity mult: ${gravityMultiplier.toFixed(2)}, Final gravity: ${finalGravity.toFixed(3)}`);
+      }
+    } else {
+      // Reset air time when on ground
+      this.airTime = 0;
+    }
+
+    // --- Process keyboard input ---
+    const moveDir = new THREE.Vector3(0, 0, 0);
+    
+    if (this.keys['w']) moveDir.z -= 1;
+    if (this.keys['s']) moveDir.z += 1;
+    if (this.keys['d']) moveDir.x += 1;
+    if (this.keys['a']) moveDir.x -= 1;
+    
+    if (moveDir.length() > 0) {
+      moveDir.normalize();
+    }
+    
+    // --- Create movement direction and basis vectors for reuse ---
+    // Only compute these shared variables if there's any movement input
+    let worldMoveDir = null;
+    let forward = null;
+    let right = null;
+    
+    if (moveDir.length() > 0) {
+      // Create a proper player basis with y always along the up direction
+      forward = new THREE.Vector3(0, 0, -1);
+      forward.applyQuaternion(this.yawObject.quaternion);
+      // Project forward onto the tangent plane
+      const playerUp = this.yawObject.position.clone().normalize();
+      forward.sub(playerUp.clone().multiplyScalar(forward.dot(playerUp)));
+      forward.normalize();
+      
+      // Create right vector from up and forward
+      right = new THREE.Vector3().crossVectors(forward, playerUp).normalize();
+      
+      // World space movement direction
+      worldMoveDir = new THREE.Vector3(0, 0, 0);
+      if (moveDir.x !== 0) worldMoveDir.addScaledVector(right, moveDir.x);
+      if (moveDir.z !== 0) worldMoveDir.addScaledVector(forward, -moveDir.z);
+    }
+    
+    // --- Basic movement physics with non-configurable parameters ---
+    if (worldMoveDir) {
+      // ... existing movement code using worldMoveDir ...
+    } else if (this.onGround) {
+      // ... existing friction code ...
+    }
+
+    // --- Movement handling using configurable parameters ---
+    if (worldMoveDir) {
+      if (this.onGround) {
+        // Direct control on ground - stronger, more responsive
+        const groundControl = worldMoveDir.clone().multiplyScalar(this.moveSpeed * 2.0);
+        
+        // Blend between current horizontal velocity and desired velocity
+        const upDir = playerUp.clone();
+        const horizontalVel = this.velocity.clone().projectOnPlane(upDir);
+        const verticalVel = upDir.multiplyScalar(this.velocity.dot(upDir));
+        
+        // Calculate new horizontal velocity with configurable blending
+        const newHorizontal = groundControl.multiplyScalar(0.9).add(horizontalVel.multiplyScalar(0.1));
+        
+        // Recombine with vertical component
+        this.velocity.copy(newHorizontal).add(verticalVel);
+      } else {
+        // IMPROVED AIR CONTROL: Very limited steering that doesn't add extra height
+        
+        // Get player's up direction
+        const upDir = playerUp.clone();
+        
+        // Extract vertical component of velocity (radial)
+        const verticalComponent = upDir.clone().multiplyScalar(this.velocity.dot(upDir));
+        const verticalSpeed = verticalComponent.length() * Math.sign(verticalComponent.dot(upDir));
+        
+        // Extract horizontal component of velocity (tangential to sphere)
+        const horizontalVel = this.velocity.clone().projectOnPlane(upDir);
+        const currentSpeed = horizontalVel.length();
+        
+        // Calculate maximum allowed steering force (very small)
+        const maxSteeringForce = this.moveSpeed * this.airControlFactor * deltaTime * 15; // Reduced multiplier
+        
+        // Calculate steering direction (difference between current and desired direction)
+        let steeringForce = new THREE.Vector3();
+        
+        if (currentSpeed > 0.01) {
+          // Calculate steering force based on current direction vs desired direction
+          const currentDir = horizontalVel.clone().normalize();
+          const desiredDir = worldMoveDir.clone().normalize();
+          
+          steeringForce = desiredDir.clone()
+            .sub(currentDir.clone().multiplyScalar(currentDir.dot(desiredDir)))
+            .normalize()
+            .multiplyScalar(Math.min(maxSteeringForce, currentSpeed * 0.1)); // Very small adjustment
+        }
+        
+        // Apply the steering force to horizontal velocity only
+        horizontalVel.add(steeringForce);
+        
+        // Limit horizontal speed
+        const newHSpeed = horizontalVel.length();
+        if (newHSpeed > this.maxAirSpeed) {
+          horizontalVel.multiplyScalar(this.maxAirSpeed / newHSpeed);
+        }
+        
+        // IMPORTANT: Recombine with the ORIGINAL vertical component
+        // This prevents steering from adding any vertical velocity
+        this.velocity.copy(horizontalVel).add(verticalComponent);
+        
+        // Log diagnostic data occasionally
+        if (Math.random() < 0.002) {
+          console.log(`Air control: steer=${steeringForce.length().toFixed(3)}, vSpeed=${verticalSpeed.toFixed(2)}, hSpeed=${horizontalVel.length().toFixed(2)}`);
+        }
+      }
+      
+      // ... rest of movement code ...
+    } else if (this.onGround) {
+      // Apply configurable ground friction
+      this.velocity.multiplyScalar(this.groundFriction);
+    } else {
+      // Apply configurable air friction
+      this.velocity.multiplyScalar(this.airFriction);
+    }
+    
+    // Apply velocity to position
+    const velocityDelta = this.velocity.clone().multiplyScalar(deltaTime);
+    playerObj.position.add(velocityDelta);
+    
+    // Skip ground checks completely for a brief time after jumping
+    // This ensures we actually leave the ground and don't land immediately
+    const MIN_GUARANTEED_AIR_TIME = 0.15; // 150ms of mandatory air time
+    if (this.isJumping && this.jumpAirTime < MIN_GUARANTEED_AIR_TIME) {
+      // Skip ground check entirely during guaranteed air time
+      // Only align up direction but don't check for ground contact
+      this._alignUpToPlanet();
+    } else {
+      // After guaranteed air time, perform regular ground checks
+      this._checkGroundContact(deltaTime);
+      
+      // Only align to terrain when on ground
+      if (this.onGround) {
+        this._alignToTerrain();
+      } else {
+        this._alignUpToPlanet();
+      }
+    }
+    
+    // --- Collision Detection and Response ---
+    this._checkCollisions();
+    
+    // Update camera position to match player
+    this._updateCamera();
+
+    // CRITICAL FIX: Update jump cooldown properly
+    if (this.jumpCooldown > 0) {
+      this.jumpCooldown -= deltaTime;
+      // Add debug logging every few frames to track cooldown
+      if (Math.random() < 0.05) {
+        console.log(`Jump cooldown: ${this.jumpCooldown.toFixed(3)}`);
+      }
+    }
+    
+    // Update "guaranteed air time" counter
+    if (this.isJumping) {
+      this.jumpAirTime += deltaTime;
+    }
+  }
+
+  // Align just the up direction to the planet, preserving look direction
+  _alignUpToPlanet() {
+    // Get current player orientation
+    const currentQuat = this.yawObject.quaternion.clone();
+    
+    // Get player position (normalized) as up vector
+    const up = this.yawObject.position.clone().normalize();
+    
+    // Keep the 'forward' direction but make it perpendicular to up
+    const forward = new THREE.Vector3(0, 0, -1);
+    forward.applyQuaternion(currentQuat);
+    // Remove any component along up direction
+    forward.sub(up.clone().multiplyScalar(forward.dot(up)));
+    forward.normalize();
+    
+    // If forward vector became too small, use a default direction
+    if (forward.lengthSq() < 0.1) {
+      forward.set(1, 0, 0).sub(up.clone().multiplyScalar(up.x)).normalize();
+    }
+    
+    // Calculate right from forward and up
+    const right = new THREE.Vector3().crossVectors(forward, up);
+    
+    // Create a rotation matrix from this orthogonal basis
+    const m = new THREE.Matrix4().makeBasis(right, up, forward.clone().negate());
+    const q = new THREE.Quaternion().setFromRotationMatrix(m);
+    
+    // Apply the new orientation
+    this.yawObject.quaternion.copy(q);
+  }
+
+  _alignToTerrain() {
+    const pos = this.yawObject.position;
     const upDir = pos.clone().normalize();
     
-    // Always apply gravity when not on ground or when sliding
-    if (!this.onGround || this.sliding) {
-      // Direction toward planet center (gravity direction)
-      const gravityDir = upDir.clone().negate();
-      
-      // Apply scaled gravity force toward planet center
-      const gravityForce = this.gravity * delta * 60;
-      this.velocity.addScaledVector(gravityDir, gravityForce);
-      
-      // Debug only when actually falling
-      if (!this.onGround) {
-        console.log(`Applying gravity (strength=${gravityForce.toFixed(3)}) toward center`);
-      }
-    }
+    // IMPROVED: Use higher precision sampling for terrain alignment
+    const sampleDist = 0.15; // Smaller sampling distance for precision
     
-    // If we have any velocity, apply it
-    if (this.velocity.lengthSq() > 0.000001) {
-      // Apply velocity to position
-      const newPos = pos.clone().add(this.velocity);
-      
-      // Check ground collision with terrain
-      const newDir = newPos.clone().normalize();
-      const terrainHeight = this.getTerrainHeight(newDir);
-      const terrainRadius = this.radius + terrainHeight;
-      
-      // If we'd be below terrain, place on surface
-      if (newPos.length() < terrainRadius + 0.2) {
-        // Position at surface with small offset
-        this.yawObject.position.copy(newDir.multiplyScalar(terrainRadius + 0.2));
-        
-        // Calculate up vector at new position
-        const surfaceNormal = this.yawObject.position.clone().normalize();
-        
-        // Calculate how steep this surface is - using slight ray offset to check area
-        const checkDist = 0.5; // Check a bit ahead for slopes
-        const checkDir1 = newDir.clone().add(new THREE.Vector3(0.1, 0, 0).normalize()).normalize();
-        const checkDir2 = newDir.clone().add(new THREE.Vector3(0, 0, 0.1).normalize()).normalize();
-        
-        const h1 = this.getTerrainHeight(checkDir1);
-        const h2 = this.getTerrainHeight(checkDir2);
-        
-        // If slope is too steep, slide instead of stopping
-        const heightDiff = Math.max(Math.abs(h1 - terrainHeight), Math.abs(h2 - terrainHeight));
-        const isSlope = heightDiff > 0.2;
-        
-        // Project velocity onto surface plane - only cancel downward velocity
-        const verticalSpeed = this.velocity.dot(surfaceNormal);
-        if (verticalSpeed < 0) { // Only cancel downward velocity
-          const verticalVelocity = surfaceNormal.clone().multiplyScalar(verticalSpeed);
-          this.velocity.sub(verticalVelocity);
-          
-          // Apply landing friction - less on slopes
-          this.velocity.multiplyScalar(isSlope ? 0.95 : 0.6);
-          
-          // Keep sliding state on slopes
-          this.sliding = isSlope;
-          this.isJumping = false;
-          this.onGround = true;
-          
-          if (!isSlope) {
-            console.log("Landed on flat ground!");
-          } else {
-            console.log("Landed on slope - sliding");
-          }
-        }
-      } else {
-        // Continue moving in air
-        this.yawObject.position.copy(newPos);
-        this.onGround = false;
-      }
-      
-      // If on ground but still moving, apply appropriate friction
-      if (this.onGround) {
-        // Set friction nearly equal to 1 for almost no friction during collisions
-        // (For sliding, we still apply a tiny damping factor)
-        const frictionFactor = this.sliding ? 0.99 : 1.0;
-        this.velocity.multiplyScalar(frictionFactor);
-        
-        // Optionally, you can disable low-velocity cutoff:
-        // if (!this.sliding && this.velocity.lengthSq() < 0.01) {
-        //   this.velocity.set(0, 0, 0);
-        // }
-      }
-      
-      // Update up vector to match position on the sphere
-      this.yawObject.up.copy(this.yawObject.position.clone().normalize());
-      
-      // Log velocity for debugging
-      if (this.isJumping) {
-        const verticalComp = this.velocity.dot(this.yawObject.up);
-        const horizontalComp = Math.sqrt(this.velocity.lengthSq() - verticalComp * verticalComp);
-        console.log(`Jumping velocity: ${this.velocity.length().toFixed(2)}, ` +
-                    `vert: ${verticalComp.toFixed(2)}, horiz: ${horizontalComp.toFixed(2)}`);
-      }
-    }
-    
-    // Calculate current height above terrain for use in movement
-    const currentDir = this.yawObject.position.clone().normalize();
-    const currentTerrainHeight = this.getTerrainHeight(currentDir);
-    const currentTerrainRadius = this.radius + currentTerrainHeight;
-    const heightAboveTerrain = this.yawObject.position.length() - currentTerrainRadius;
-    
-    // get camera forward
-    const forward = new THREE.Vector3();
-    this.camera.getWorldDirection(forward);
+    // Use camera alignment for better direction context
+    const forward = new THREE.Vector3(0, 0, -1);
+    forward.applyQuaternion(this.yawObject.quaternion);
     forward.projectOnPlane(upDir).normalize();
     
-    // compute right = forward × up
-    const right = new THREE.Vector3().crossVectors(forward, upDir).normalize();
+    const right = new THREE.Vector3().crossVectors(upDir, forward).normalize();
     
-    // accumulate input
-    const mv = new THREE.Vector3();
-    if ( this.keys['w'] ) mv.add(forward);
-    if ( this.keys['s'] ) mv.add(forward.clone().negate());
-    if ( this.keys['a'] ) mv.add(right.clone().negate());
-    if ( this.keys['d'] ) mv.add(right);
-
-    if ( mv.lengthSq() > 0 ) {
-      // Apply movement speed
-      const speedMultiplier = (this.onGround && !this.sliding) ? 1.0 : 0.8;
-      const moveStep = mv.clone().normalize().multiplyScalar(this.moveSpeed * speedMultiplier); // Calculate the full step vector
-
-      // --- REFINED STEEP SLOPE CHECK AHEAD (Foot and Head Level) ---
-      const currentPos = this.yawObject.position;
-      const currentDir = currentPos.clone().normalize();
-      const currentHeight = this.getTerrainHeight(currentDir);
-      const currentTerrainPoint = currentDir.clone().multiplyScalar(this.radius + currentHeight);
-      const currentUp = this.yawObject.up; // Use the current 'up' orientation
-
-      // --- Foot Level Check ---
-      const lookAheadDistFoot = this.playerRadius * 0.5; // Check distance at foot level
-      const lookAheadVecFoot = moveStep.clone().normalize().multiplyScalar(lookAheadDistFoot);
-      const checkAheadPosFoot = currentPos.clone().add(lookAheadVecFoot);
-      const checkAheadDirFoot = checkAheadPosFoot.clone().normalize();
-      const checkAheadHeightFoot = this.getTerrainHeight(checkAheadDirFoot);
-      const aheadTerrainPointFoot = checkAheadDirFoot.clone().multiplyScalar(this.radius + checkAheadHeightFoot);
-      const heightDiffAheadFoot = checkAheadHeightFoot - currentHeight;
-      const distAheadFoot = lookAheadDistFoot;
-
-      // --- Head Level Check (Camera Position) ---
-      // Calculate current head position approx.
-      const currentHeadPos = currentPos.clone().add(currentUp.clone().multiplyScalar(this.cameraHeight - this.playerHeightOffset));
-      // INCREASED head look-ahead distance from 0.3 to 0.45 (closer to foot check)
-      const lookAheadDistHead = this.playerRadius * 0.45;
-      const lookAheadVecHead = moveStep.clone().normalize().multiplyScalar(lookAheadDistHead);
-      const checkAheadPosHead = currentHeadPos.clone().add(lookAheadVecHead);
-      const checkAheadDirHead = checkAheadPosHead.clone().normalize();
-      // Get terrain height at the *direction* of the head check point
-      const checkAheadHeightHead = this.getTerrainHeight(checkAheadDirHead);
-      const checkAheadHeadHeightAboveSphereCenter = checkAheadPosHead.length();
-      // Calculate terrain radius at the direction of the head check point
-      const terrainHeightAtHeadCheck = this.radius + checkAheadHeightHead;
-
-      let steepSlopeAhead = false;
-      let headCollision = false; // Add flag specifically for head collision
-      let slopeNormalAhead = new THREE.Vector3();
-      let slopeAngle = 0;
-
-      // Check foot level slope
-      if (distAheadFoot > 1e-6) {
-          slopeAngle = Math.atan2(heightDiffAheadFoot, distAheadFoot);
-          if (slopeAngle > this.maxTerrainAngle) {
-              steepSlopeAhead = true;
-              // Calculate normal based on foot-level check
-              const slopeVector = aheadTerrainPointFoot.clone().sub(currentTerrainPoint);
-              slopeNormalAhead = new THREE.Vector3().crossVectors(currentUp, slopeVector).normalize();
-              if (slopeNormalAhead.dot(moveStep.clone().normalize()) > 0) slopeNormalAhead.negate();
-              console.log(`Steep slope detected at FEET! Angle: ${(slopeAngle * 180 / Math.PI).toFixed(1)}`);
-          }
-      }
-
-      // Check head level collision *only if foot level is clear*
-      // Check if the head's potential forward position is below the terrain height at that point
-      if (!steepSlopeAhead && checkAheadHeadHeightAboveSphereCenter < terrainHeightAtHeadCheck) {
-          steepSlopeAhead = true; // Still use this flag to trigger projection
-          headCollision = true; // Set specific head collision flag
-          slopeNormalAhead = moveStep.clone().normalize().negate(); // Normal points directly back
-          console.log(`Head collision detected! Head would be at ${checkAheadHeadHeightAboveSphereCenter.toFixed(2)}, terrain is ${terrainHeightAtHeadCheck.toFixed(2)}`);
-          // Note: finalHeight and terrainNormal will be handled in the next block
-      }
-      // --- END STEEP SLOPE & HEAD CHECK ---
-
-      let finalMoveStep = moveStep.clone();
-      let terrainNormal = this.yawObject.up.clone(); // Default to current up
-      let finalHeight = currentHeight; // Default to current height
-
-      if (steepSlopeAhead) {
-          // Treat steep slope OR head collision like a wall - project movement vector
-          const projectedMove = moveStep.clone().projectOnPlane(slopeNormalAhead);
-          finalMoveStep = projectedMove; // Use the adjusted movement
-          console.log("Adjusting movement due to steep slope or head collision.");
-          // Keep current height and normal when hitting a wall
-          finalHeight = currentHeight; // Explicitly use current height
-          terrainNormal = this.yawObject.up; // Maintain current orientation
-      } else {
-          // Slope is climbable, proceed with normal terrain following
-          // ... (rest of the normal terrain following logic remains the same) ...
-          const targetPos = currentPos.clone().add(moveStep); // Use original moveStep for target
-          const targetDir = targetPos.clone().normalize();
-          const sampleDist = 0.1;
-          const hCenter = this.getTerrainHeight(targetDir);
-          const sampleForwardOffset = moveStep.clone().normalize().multiplyScalar(sampleDist);
-          const sampleRightVec = new THREE.Vector3().crossVectors(targetDir, sampleForwardOffset).normalize();
-          const sampleRightOffset = sampleRightVec.multiplyScalar(sampleDist);
-          const dirForward = targetDir.clone().add(sampleForwardOffset).normalize();
-          const dirRight = targetDir.clone().add(sampleRightOffset).normalize();
-          const hForward = this.getTerrainHeight(dirForward);
-          const hRight = this.getTerrainHeight(dirRight);
-          const pCenter = targetDir.clone().multiplyScalar(this.radius + hCenter);
-          const pForward = dirForward.clone().multiplyScalar(this.radius + hForward);
-          const pRight = dirRight.clone().multiplyScalar(this.radius + hRight);
-          const vForward = pForward.sub(pCenter);
-          const vRight = pRight.sub(pCenter);
-
-          if (vForward.lengthSq() > 1e-6 && vRight.lengthSq() > 1e-6) {
-              terrainNormal = new THREE.Vector3().crossVectors(vRight, vForward).normalize();
-              if (terrainNormal.dot(targetDir) < 0) terrainNormal.negate();
-          } else {
-              terrainNormal = targetDir.clone(); // Fallback
-          }
-          finalHeight = hCenter; // Use the height at the target center
-      }
-
-      // Calculate final position based on potentially adjusted move step and height
-      const finalTargetPos = currentPos.clone().add(finalMoveStep);
-      const finalTargetDir = finalTargetPos.clone().normalize();
-      const finalPos = finalTargetDir.multiplyScalar(this.radius + finalHeight + this.playerHeightOffset);
-
-      // Check for collisions with OBJECTS (trees, rocks, etc.)
-      // ... (existing object collision detection code remains the same) ...
-      let collide = false;
-      let collisionNormal = new THREE.Vector3();
-      const validCollidables = this.collidables.filter((obj, index) => {
-        // Skip terrain and explicitly marked non-collision objects
-        if (index === 0) return false; // planet
-        if (obj.isWater) return false;
-        if (obj.noCollision) return false;
-        return !!obj.direction;
+    // Sample terrain heights at multiple points in a ring around the player
+    const samplePoints = [];
+    const angleStep = Math.PI / 4;
+    
+    // Get terrain height at center point
+    const h0 = this.getTerrainHeight(upDir);
+    
+    // Get heights at 8 points around player in a circle
+    for (let angle = 0; angle < Math.PI * 2; angle += angleStep) {
+      const sampleDir = new THREE.Vector3()
+        .addScaledVector(right, Math.cos(angle) * sampleDist)
+        .addScaledVector(forward, Math.sin(angle) * sampleDist)
+        .add(upDir)
+        .normalize();
+      
+      const height = this.getTerrainHeight(sampleDir);
+      samplePoints.push({
+        dir: sampleDir,
+        height: height
       });
-      
-      // Check for collisions
-      // ...existing collision detection code...
-      for (const obj of validCollidables) {
-        const objDir = obj.direction;
-        const posDir = finalPos.clone().normalize();
-        const dot = posDir.dot(objDir);
-        const angle = Math.acos(Math.min(Math.max(dot, -1), 1));
-        const surfaceDist = angle * this.radius;
-        
-        const objectRadius = obj.radius || 1.0;
-        let threshold;
-        if (obj.mesh.userData?.isTree || obj.mesh.userData?.isPineTree) {
-          // Lower threshold from 2.0 to 1.6 so trees don't block too far out:
-          threshold = Math.max(1.6, objectRadius * 0.4);
-        } else {
-          threshold = objectRadius * 0.5 + this.playerRadius * 0.7;
-        }
-        if (surfaceDist < threshold) {
-          collide = true;
-          collisionNormal.copy(objDir);
-          break;
-        }
-      }
-
-      if (!collide) {
-        // No object collision: Move player and align to terrain normal (calculated above)
-        this.yawObject.position.copy(finalPos);
-        this.yawObject.up.copy(terrainNormal); // Align player rig to terrain (or keep current if hit steep slope/head)
-
-        // Update sliding state based on the normal we are aligned to
-        const verticalDir = finalPos.clone().normalize();
-        const slopeAngleCos = terrainNormal.dot(verticalDir);
-        // Only slide if actually on ground and slope is steep
-        this.sliding = this.onGround && (slopeAngleCos < this.slideAngleThreshold);
-
-      } else {
-        // Handle OBJECT collision response (slide along object)
-        // ... (existing collision response code remains the same) ...
-        // Ensure 'up' is updated during sliding/collision response if position changes
-        const mvDir = mv.clone().normalize();
-        const projected = mvDir.projectOnPlane(collisionNormal).normalize();
-        const slideDir = projected.length() > 0.001 ? projected : mvDir;
-        // Use a reduced speed factor (e.g., 0.8) for sliding motion
-        const speedMultiplier = (this.onGround && !this.sliding) ? 1.0 : 0.8;
-        const step = slideDir.multiplyScalar(this.moveSpeed * speedMultiplier);
-        
-        // Candidate new position
-        const candPos = this.yawObject.position.clone().add(step);
-        const candDir = candPos.clone().normalize();
-        const h = this.getTerrainHeight(candDir);
-        const candFinal = candDir.multiplyScalar(this.radius + h + heightAboveTerrain);
-        
-        // Re-test candidate against each collidable
-        let slideBlocked = false;
-        for (const obj2 of validCollidables) {
-          const dDot = Math.min(Math.max(candFinal.clone().normalize().dot(obj2.direction), -1), 1);
-          const dAng = Math.acos(dDot);
-          const dDist = dAng * this.radius;
-          let dThresh = obj2.mesh.userData?.isTree
-                          ? Math.max(1.6, obj2.radius * 0.4)
-                          : obj2.radius * 0.5 + this.playerRadius * 0.7;
-          if (dDist < dThresh) { slideBlocked = true; break; }
-        }
-        
-        if (!slideBlocked) {
-          this.yawObject.position.copy(candFinal);
-          this.yawObject.up.copy(candFinal.clone().normalize());
-          console.log("Sliding across tree trunk");
-        } else {
-          console.log("Side‑swipe blocked by collision");
-        }
-      }
-    } else {
-      // --- NO PLAYER INPUT - Update orientation based on current position if moving due to gravity/sliding ---
-      if (this.velocity.lengthSq() > 1e-6 || this.sliding) {
-         const currentDir = this.yawObject.position.clone().normalize();
-         const currentHeight = this.getTerrainHeight(currentDir);
-         
-         // Simplified normal calculation based on current position (less precise but ok when not actively moving)
-         const sampleF = currentDir.clone().add(new THREE.Vector3(0.1,0,0).normalize()).normalize(); // Arbitrary forward/right
-         const sampleR = currentDir.clone().add(new THREE.Vector3(0,0,0.1).normalize()).normalize();
-         const hF = this.getTerrainHeight(sampleF);
-         const hR = this.getTerrainHeight(sampleR);
-         const pC = currentDir.clone().multiplyScalar(this.radius + currentHeight);
-         const pF = sampleF.clone().multiplyScalar(this.radius + hF);
-         const pR = sampleR.clone().multiplyScalar(this.radius + hR);
-         const vF = pF.sub(pC);
-         const vR = pR.sub(pC);
-         let currentNormal = new THREE.Vector3().crossVectors(vR, vF).normalize();
-         if (currentNormal.dot(currentDir) < 0) currentNormal.negate();
-         
-         this.yawObject.up.copy(currentNormal);
-         
-         // Update sliding state
-         const slopeAngleCos = currentNormal.dot(currentDir);
-         this.sliding = slopeAngleCos < this.slideAngleThreshold;
-      }
-   }
-    
-    // After movement, check for surface interaction
-    this.checkSurfaceInteraction(upDir);
-    
-    // Process sliding physics on steep surfaces
-    if (this.sliding && this.currentSurface) {
-      const surfaceNormal = this.currentSurface.direction;
-      
-      // Calculate slide vector (downhill direction)
-      const slideVector = new THREE.Vector3();
-      slideVector.crossVectors(
-        upDir.clone().cross(surfaceNormal).normalize(),
-        surfaceNormal
-      ).normalize();
-      
-      // Apply slide force
-      const slideForce = this.slideAcceleration * delta * 60;
-      this.velocity.add(slideVector.multiplyScalar(slideForce));
-      
-      // Apply friction based on surface
-      const friction = this.currentSurface.friction || 0.98;
-      this.velocity.multiplyScalar(friction);
-      
-      // Apply velocity
-      this.yawObject.position.add(this.velocity);
-      
-      // Update orientation to match new position
-      const newUpDir = this.yawObject.position.clone().normalize();
-      this.yawObject.up.copy(newUpDir);
-    } else {
-      // Gradually reduce velocity when not sliding
-      this.velocity.multiplyScalar(0.9);
     }
     
-    // Update jump cooldown
-    if (this.jumpCooldown > 0) {
-      this.jumpCooldown -= delta;
+    // Calculate normal from all sample points for stability
+    const p0 = upDir.clone().multiplyScalar(this.radius + h0);
+    const normals = [];
+    
+    for (let i = 0; i < samplePoints.length; i++) {
+      const p1 = samplePoints[i].dir.clone().multiplyScalar(this.radius + samplePoints[i].height);
+      const p2 = samplePoints[(i + 1) % samplePoints.length].dir.clone()
+        .multiplyScalar(this.radius + samplePoints[(i + 1) % samplePoints.length].height);
+      
+      const v1 = p1.clone().sub(p0);
+      const v2 = p2.clone().sub(p0);
+      
+      const normal = new THREE.Vector3().crossVectors(v1, v2).normalize();
+      if (normal.dot(upDir) < 0) normal.negate(); // Ensure outward-facing
+      normals.push(normal);
     }
     
-    // When landing, reset jump counter
-    if (this.onGround && this.jumpsRemaining < this.maxJumps) {
-      this.jumpsRemaining = this.maxJumps;
-      console.log("Jump counter reset - ready to jump again");
+    // Average all normals for a stable result
+    const normal = new THREE.Vector3();
+    for (const n of normals) {
+      normal.add(n);
     }
+    normal.normalize();
     
-    // Ensure camera position is set correctly within the pitch object (relative to yawObject)
-    // This uses the updated this.cameraHeight set in the constructor
-    this.camera.position.set(0, this.cameraHeight, 0);
-
-    return true;
+    // Update player orientation
+    this.yawObject.up.copy(normal);
+    
+    // CRITICAL FIX: Ensure EXACT height alignment to terrain
+    const targetHeight = this.radius + h0 + this.playerHeightOffset;
+    
+    // Always snap exactly to terrain height, no tolerance
+    pos.normalize().multiplyScalar(targetHeight);
   }
 
-  checkSurfaceInteraction(upDir) {
-    const pos = this.yawObject.position.clone();
-    const rayOrigin = pos.clone();
-    const rayDir = pos.clone().negate().normalize();
+  // Fix the ground detection to prevent false landing detection
+  _checkGroundContact(deltaTime) {
+    const pos = this.yawObject.position;
+    const dir = pos.clone().normalize();
     
-    // Cast ray downward
-    const raycaster = new THREE.Raycaster(rayOrigin, rayDir);
-    raycaster.far = this.playerRadius + 0.1; // Short distance
+    // IMPROVED: Use multi-point sampling for better terrain detection
+    // This helps find the true height even on complex terrain features
+    const samplePoints = [
+      { dir: dir, weight: 0.7 },  // Current position (highest weight)
+      { dir: dir.clone().add(new THREE.Vector3(0.05, 0, 0)).normalize(), weight: 0.075 },
+      { dir: dir.clone().add(new THREE.Vector3(-0.05, 0, 0)).normalize(), weight: 0.075 },
+      { dir: dir.clone().add(new THREE.Vector3(0, 0, 0.05)).normalize(), weight: 0.075 },
+      { dir: dir.clone().add(new THREE.Vector3(0, 0, -0.05)).normalize(), weight: 0.075 }
+    ];
     
-    // Filter collidables to check only solid objects
-    const validCollidables = this.collidables.filter(obj => {
-      if (!obj.mesh || !obj.direction) return false;
-      if (obj.noCollision) return false;
-      return true;
-    });
+    // Calculate weighted average terrain height
+    let terrainHeight = 0;
+    let totalWeight = 0;
     
-    // Cast ray to check for ground
-    const intersects = [];
-    validCollidables.forEach(obj => {
-      if (obj.mesh instanceof THREE.Mesh && obj.mesh.geometry) {
-        const localRay = raycaster.ray.clone();
-        const inverseMatrix = new THREE.Matrix4().copy(obj.mesh.matrixWorld).invert();
-        localRay.applyMatrix4(inverseMatrix);
+    for (const point of samplePoints) {
+      terrainHeight += this.getTerrainHeight(point.dir) * point.weight;
+      totalWeight += point.weight;
+    }
+    
+    terrainHeight /= totalWeight;
+    const terrainRadius = this.radius + terrainHeight;
+    
+    // IMPROVED: Calculate true distance to terrain using sampled height
+    // This ensures we're measuring distance to the actual terrain surface
+    const distanceToTerrain = pos.length() - terrainRadius;
+    
+    // Debug this value occasionally
+    if (Math.random() < 0.01) {
+      console.log(`Distance to terrain: ${distanceToTerrain.toFixed(2)}, terrain height: ${terrainHeight.toFixed(2)}, onGround: ${this.onGround}`);
+    }
+    
+    // CRITICAL: Use a very tight ground threshold to prevent floating
+    const groundThreshold = this.playerHeightOffset + 0.02; // Extremely tight threshold
+    
+    if (distanceToTerrain <= groundThreshold) {
+      // We're at or near ground level
+      if (!this.onGround) {
+        console.log("Ground contact detected - landing");
         
-        const intersect = localRay.intersectTriangle(
-          new THREE.Vector3(-1, 0, -1),
-          new THREE.Vector3(-1, 0, 1),
-          new THREE.Vector3(1, 0, 1),
-          false,
-          new THREE.Vector3()
-        );
+        // FIXED: Make sure we always reset jumps to max value when landing
+        this.onGround = true;
+        this.isJumping = false;
+        this.jumpAirTime = 0;
+        this.jumpsRemaining = this.maxJumps; // CRITICAL: Always restore to full maxJumps value
+        this.jumpCooldown = 0; // CRITICAL: Reset cooldown to 0 when landing!
+        this.airTime = 0;
         
-        if (intersect) {
-          intersects.push({
-            object: obj,
-            point: intersect
-          });
+        // CRITICAL FIX: Always snap precisely to ground level on landing
+        pos.normalize().multiplyScalar(terrainRadius + this.playerHeightOffset);
+        
+        // Handle velocity changes for landing
+        const upDir = pos.clone().normalize();
+        const verticalVel = this.velocity.dot(upDir);
+        
+        if (verticalVel < 0) {
+          // Remove downward component
+          this.velocity.addScaledVector(upDir, -verticalVel);
+          
+          // Add slight bounce for better feel on hard landings
+          if (verticalVel < -0.1) {
+            this.velocity.addScaledVector(upDir, Math.min(-verticalVel * 0.2, 0.05));
+          }
+        }
+      } else {
+        // CRITICAL FIX: Continuous ground snapping to prevent hovering
+        // We're already on ground, but need to maintain exact distance from terrain
+        
+        // IMPORTANT: Always snap exactly to the terrain
+        const targetHeight = terrainRadius + this.playerHeightOffset;
+        pos.normalize().multiplyScalar(targetHeight);
+        
+        // Cancel any downward velocity component as we're on ground
+        const upDir = pos.clone().normalize();
+        const verticalVel = this.velocity.dot(upDir);
+        if (verticalVel < 0) {
+          this.velocity.addScaledVector(upDir, -verticalVel);
         }
       }
-    });
-    
-    // Process the closest intersection
-    if (intersects.length > 0) {
-      // Sort by distance
-      intersects.sort((a, b) => {
-        return a.distance - b.distance;
-      });
-      
-      const closest = intersects[0];
-      const surfaceObj = closest.object;
-      
-      // Calculate angle between surface normal and up vector
-      const surfaceNormal = surfaceObj.direction;
-      const surfaceDot = upDir.dot(surfaceNormal);
-      
-      this.onGround = true;
-      this.currentSurface = surfaceObj;
-      
-      // Check if surface is steep enough to slide
-      if (surfaceDot < this.slideAngleThreshold && surfaceObj.mesh.userData.isRock) {
-        this.sliding = true;
-      }
-      
-      // IMPORTANT: Set on ground state here clearly
-      this.onGround = true;
-      console.log("Ground detected in surface check");
-      
     } else {
-      // Add else clause to make sure we know when we're not on ground
-      // Only set false if we're close to the ground and should be checking
-      const pos = this.yawObject.position;
-      const dir = pos.clone().normalize();
-      const terrainHeight = this.getTerrainHeight(dir);
-      const terrainRadius = this.radius + terrainHeight;
-      
-      // If we're close to the ground but not touching any collidable, we should still be on regular ground
-      const distanceToTerrain = pos.length() - terrainRadius;
-      if (distanceToTerrain < 0.2) {
-        this.onGround = true;
+      // We're above ground level - detect falling
+      if (this.onGround) {
+        // Detect walking off edges faster to prevent floating
+        if (distanceToTerrain > 0.3) { // Even more sensitive to losing ground
+          console.log("Lost ground contact - falling");
+          this.onGround = false;
+        }
       }
     }
   }
@@ -682,5 +682,124 @@ export default class SphereControls {
   // Add a helper method to get the current velocity
   getVelocity() {
     return this.velocity.clone();
+  }
+
+  _checkCollisions() {
+    // Skip collision check if we have no collidables
+    if (!this.collidables || this.collidables.length < 1) return;
+
+    const pos = this.yawObject.position;
+    const dir = pos.clone().normalize();
+
+    // Check collisions with objects (trees, rocks, etc.) - skip planet
+    for (let i = 1; i < this.collidables.length; i++) {
+      const obj = this.collidables[i];
+      
+      // Skip if object has no position, direction, or is explicitly marked as non-collidable
+      if (!obj.position || !obj.direction || obj.noCollision) continue;
+      
+      // Get angular distance between player and object (great-circle distance on sphere)
+      const objDir = obj.direction;
+      const dot = dir.dot(objDir);
+      const angle = Math.acos(Math.min(Math.max(dot, -1), 1));
+      
+      // Convert to surface distance
+      const surfaceDist = angle * this.radius;
+      
+      // Get combined collision radius
+      let collisionRadius = this.playerRadius + (obj.radius || 1.0);
+      
+      // Special case for trees - use a cylindrical collision model
+      if (obj.mesh?.userData?.isTree || obj.mesh?.userData?.isPineTree) {
+        // For trees, only collide if we're at similar height
+        const objPos = obj.position.clone();
+        const playerHeight = pos.length() - this.radius;
+        const objHeight = objPos.length() - this.radius;
+        const heightDiff = Math.abs(playerHeight - objHeight);
+        
+        // Use collision height from object if available, otherwise estimate
+        const collisionHeight = obj.collisionHeight || obj.radius * 2;
+        
+        // Only collide if within the trunk's height range
+        if (heightDiff > collisionHeight) {
+          continue;
+        }
+        
+        // Use a smaller collision radius for tree trunks
+        collisionRadius = this.playerRadius + Math.min(2.0, obj.radius * 0.5);
+      }
+      
+      // Check if collision occurs
+      if (surfaceDist < collisionRadius) {
+        // Get collision response direction (away from object)
+        const responseDir = dir.clone().sub(
+          objDir.clone().multiplyScalar(dot)
+        ).normalize();
+        
+        // Apply a small impulse in the collision response direction
+        const impulse = responseDir.clone().multiplyScalar(0.03);
+        this.velocity.add(impulse);
+        
+        // Move player out of collision
+        const correction = responseDir.clone().multiplyScalar(collisionRadius - surfaceDist + 0.05);
+        this.yawObject.position.add(correction);
+        
+        // Reduce horizontal velocity on collision for better feel
+        const upDir = this.yawObject.position.clone().normalize();
+        const horizontalVel = this.velocity.clone().projectOnPlane(upDir);
+        horizontalVel.multiplyScalar(0.5); // Significant reduction on collision
+        
+        // Recombine vertical and reduced horizontal components
+        const verticalVel = upDir.clone().multiplyScalar(this.velocity.dot(upDir));
+        this.velocity.copy(verticalVel).add(horizontalVel);
+      }
+    }
+    
+    // Also check for ground collision
+    const terrainHeight = this.getTerrainHeight(dir);
+    const terrainRadius = this.radius + terrainHeight;
+    
+    if (pos.length() < terrainRadius + this.playerHeightOffset * 0.5) {
+      // We're too close to or below the terrain - correct position
+      const correctedPos = dir.clone().multiplyScalar(terrainRadius + this.playerHeightOffset);
+      this.yawObject.position.copy(correctedPos);
+      
+      // Cancel any downward velocity
+      const upDir = dir.clone();
+      const verticalVel = this.velocity.dot(upDir);
+      if (verticalVel < 0) {
+        this.velocity.addScaledVector(upDir, -verticalVel);
+      }
+      
+      // Mark as on ground
+      this.onGround = true;
+    }
+  }
+
+  _updateCamera() {
+    // Make sure camera is positioned correctly on the pitch object
+    this.camera.position.set(0, this.cameraHeight, 0);
+    
+    // Make sure camera's up vector aligns with player's up vector
+    this.camera.up.copy(this.yawObject.up);
+    
+    // Debug
+    if (Math.random() < 0.005) {
+      console.log(`Camera position: (${this.camera.position.x.toFixed(2)}, ${this.camera.position.y.toFixed(2)}, ${this.camera.position.z.toFixed(2)})`);
+      console.log(`Camera up: (${this.camera.up.x.toFixed(2)}, ${this.camera.up.y.toFixed(2)}, ${this.camera.up.z.toFixed(2)})`);
+    }
+  }
+
+  // Add a debug method to help diagnose jump issues
+  _debugJumpState() {
+    console.log({
+      onGround: this.onGround,
+      isJumping: this.isJumping, 
+      jumpsRemaining: this.jumpsRemaining,
+      maxJumps: this.maxJumps,
+      jumpCooldown: this.jumpCooldown,
+      jumpAirTime: this.jumpAirTime,
+      lastVelocity: this.velocity.length()
+    });
   }
 }

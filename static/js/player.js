@@ -19,7 +19,7 @@ export default class Player {
       startElevation: 30,
       // DOUBLE the eye height AGAIN
       eyeHeight: 6.6, // (3.3 * 2)
-      moveSpeed: 4.0,
+      moveSpeed: 32.0,
       lookSpeed: 0.002,
       jumpStrength: 20.0,
       gravity: 0.015,
@@ -175,10 +175,14 @@ export default class Player {
    * Force player to jump
    */
   makeJump() {
-    this.controls.velocity.addScaledVector(
-      this.playerObject.position.clone().normalize(),
-      this.options.jumpStrength
-    );
+    // apply upward + forward impulse for directional jump
+    const forward = new THREE.Vector3();
+    this.camera.getWorldDirection(forward);
+    forward.normalize();
+    forward.multiplyScalar(this.options.jumpStrength);
+    forward.y = this.options.jumpStrength; // ensure strong upward component
+
+    this.controls.velocity.add(forward);
     this.controls.isJumping = true;
     this.controls.onGround = false;
   }
