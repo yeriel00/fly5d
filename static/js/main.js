@@ -10,6 +10,8 @@ import FXManager from './fx_manager.js';
 import LowPolyGenerator from './low_poly_generator.js';
 // import AudioManager from './audio_manager.js'; // Comment out the audio manager import if you don't need it
 import Player from './player.js';
+// Fix the TWEEN import path to use a relative path
+import TWEEN from './libs/tween.esm.js';
 
 // --- Constants ---
 const R = 400; // INCREASED radius from 300 to 400 for more spacious feel
@@ -474,7 +476,12 @@ initEnvironment(scene, 'medium', worldConfig, (placerFunc) => {
   fxManager = new FXManager(scene, player.getCamera(), renderer);
   
   // Initialize player UI including weapon controls
-  initializePlayerUI();
+  if (typeof initializePlayerUI === 'function') {
+    initializePlayerUI();
+  } else {
+    console.warn("initializePlayerUI function not defined yet, will be called later");
+    // We'll call it after it's defined
+  }
   
   // Start animation loop after player is created
   animate();
@@ -496,6 +503,9 @@ onWindowResize();
 // --- Animation Loop ---
 function animate() {
   const delta = clock.getDelta();
+  
+  // Update TWEEN animations
+  TWEEN.update();
   
   // Update player
   if (player) {
@@ -1542,7 +1552,7 @@ function initializePlayerUI() {
   testCollisionWith(5)       // Test collision with object at index 5
   `);
 
-  // Add debug controls for collision responsiveness
+  // Add controls for collision responsiveness
   window.toggleCollisionDebug = (enable = true) => {
     if (!player?.weaponSystem?.projectileSystem) return "Projectile system not available";
     
@@ -1677,11 +1687,6 @@ function initializePlayerUI() {
     player.weaponSystem.projectileSystem.options.projectileRadius = oldRadius * multiplier;
     
     const newRadius = player.weaponSystem.projectileSystem.options.projectileRadius;
-    console.log(`Projectile radius adjusted from ${oldRadius.toFixed(2)} to ${newRadius.toFixed(2)}`);
-    
-    return { oldRadius, newRadius };
-  };
-  
   // Add commands to console help
   console.log(`
   // *****************************************
@@ -1963,4 +1968,77 @@ function initializePlayerUI() {
   improveTreeBounce()         // Apply better bounce physics for tree collisions
                               // Makes apples bounce realistically off tree trunks
   `);
+
+  // Add a high-speed projectile mode to the initializePlayerUI function
+  window.superSnappyApples = (level = 'medium') => {
+    if (!player?.weaponSystem?.projectileSystem) 
+      return "Projectile system not available";
+    
+    const system = player.weaponSystem.projectileSystem;
+    
+    // Different presets based on desired intensity
+    const presets = {
+      medium: {
+        speed: 65,
+        bounce: 0.75,
+        spin: 1.5
+      },
+      high: {
+        speed: 85,
+        bounce: 0.8,
+        spin: 2.0
+      },
+      extreme: {
+        speed: 120,
+        bounce: 0.85,
+        spin: 3.0
+      }
+    };
+    
+    // Use selected preset or default to medium
+    const preset = presets[level] || presets.medium;
+    
+    // Apply super snappy settings
+    system.options.projectileSpeed = preset.speed;
+    system.options.bounceFactor = preset.bounce;
+    
+    // Modify spin multiplier for all new projectiles
+    system.spinMultiplier = preset.spin;
+    
+    // Enable debug visualization for bounce effects
+    system.debug = true;
+    
+    console.log(`🚀 SUPER SNAPPY APPLES ACTIVATED - ${level.toUpperCase()} INTENSITY`);
+    console.log(`✓ Projectile speed increased to ${preset.speed}`);
+    console.log(`✓ Bounce factor increased to ${preset.bounce}`);
+    console.log(`✓ Spin multiplier set to ${preset.spin}×`);
+    console.log(`✓ Visual bounce effects enabled`);
+    
+    return `Super Snappy Apples: ${level.toUpperCase()} mode activated!`;
+  };
+  
+  // Add apple trail command for extra visual flair
+  window.enableAppleTrail = (enable = true) => {
+    if (!player?.weaponSystem?.projectileSystem) 
+      return "Projectile system not available";
+    
+    const system = player.weaponSystem.projectileSystem;
+    system.enableTrail = enable;
+    
+    console.log(`Apple motion trails ${enable ? 'ENABLED' : 'DISABLED'}`);
+    return `Apple motion trails ${enable ? 'enabled' : 'disabled'}`;
+  };
+  
+  // Add the commands to the console help
+  console.log(`
+  // *****************************************
+  // ***** SUPER SNAPPY APPLE PHYSICS *****
+  // *****************************************
+  superSnappyApples('medium')   // Apply faster, bouncier apple physics (default)
+  superSnappyApples('high')     // Even faster and bouncier apples
+  superSnappyApples('extreme')  // EXTREMELY fast and bouncy apples!
+  
+  enableAppleTrail(true)        // Add motion trails to flying apples
+  `);
+}
 }
