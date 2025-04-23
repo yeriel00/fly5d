@@ -2,429 +2,260 @@ import * as THREE from 'three';
 import ProjectileSystem from './ProjectileSystem.js';
 
 /**
- * Handles player weapons including slingshot
+ * Manages weapons and firing for the player
  */
 export default class WeaponSystem {
   /**
    * Create a new weapon system
    * @param {THREE.Scene} scene - The 3D scene
-   * @param {THREE.Camera} camera - Player camera
+   * @param {THREE.Camera} camera - The player camera
    * @param {Object} options - Configuration options
    */
   constructor(scene, camera, options = {}) {
     this.scene = scene;
     this.camera = camera;
     this.options = Object.assign({
-      launchOffset: new THREE.Vector3(0, -1.0, -2.0), // Lower and further out in front
+      projectileSpeed: 130,
+      maxAmmo: {
+        apple: 50,
+        goldenApple: 10
+      },
+      cooldownTime: 0.2, // seconds
       sphereRadius: 400,
       gravity: 0.15,
-      // TURBO BOOST: Dramatically faster projectile speed for snappy feel
-      projectileSpeed: 130, // Increased from 80 to 130 for ultra-fast initial velocity
-      projectileRadius: 1.0,
       collidables: []
     }, options);
-    
-    // Create projectile system with enhanced physics
-    this.projectileSystem = new ProjectileSystem(scene, {
-      sphereRadius: this.options.sphereRadius,
-      // JUICY PHYSICS: Higher gravity for more dramatic arcs but less than before
-      gravity: this.options.gravity * 1.8, // Reduced from 2.5x to 1.8x for better arc
-      projectileRadius: this.options.projectileRadius,
-      projectileSpeed: this.options.projectileSpeed,
-      // SNAPPY: Make projectiles disappear faster when they go too far
-      projectileLifetime: 6000, // 6 seconds (down from 8) for quicker cleanup
-      // BOUNCY: Much higher bounce factor for satisfying physics
-      bounceFactor: 0.75, // Increased from default 0.6 for extra bounce
-      getTerrainHeight: this.options.getTerrainHeight,
-      collidables: this.options.collidables
-    });
-    
-    // Weapon state
-    this.currentWeapon = 'slingshot';
-    this.isCharging = false;
-    this.isFiring = false;
-    
-    // Add this line to create the slingshotState property in WeaponSystem
-    this.slingshotState = { direction: new THREE.Vector3() };
-    
-    // Ammo and cooldowns
+
+    // Initialize ammo counts
     this.ammo = {
       apple: 10,
       goldenApple: 3
     };
+
+    // Current weapon state
+    this.currentWeapon = 'slingshot'; // Start with regular slingshot
+    this.isCharging = false;
+    this.chargeState = null;
     this.cooldown = 0;
-    this.rechargeTime = 1.0; // seconds
-    
-    // Create slingshot model
-    this.createSlingshotModel();
-    
-    // Sound effects
-    this.sounds = {
-      charge: null,
-      release: null
-    };
-    
-    // Try to load sounds if available
-    this.loadSounds();
+
+    // ADDED: Debug flag for logging
+    this.debug = false;
+
+    // Initialize projectile system
+    this.projectileSystem = new ProjectileSystem(scene, {
+      sphereRadius: this.options.sphereRadius,
+      gravity: this.options.gravity,
+      projectileSpeed: this.options.projectileSpeed,
+      collidables: this.options.collidables
+    });
   }
-  
+
   /**
-   * Create a basic slingshot model
+   * Update weapon system state
+   * @param {number} deltaTime - Time since last frame in seconds
+   * @param {THREE.Vector3} playerPosition - Current player position
    */
-  createSlingshotModel() {
-    // Create a simple Y-shaped slingshot model
-    const geometry = new THREE.BufferGeometry();
-    
-    // Define vertices for a Y shape
-    const vertices = new Float32Array([
-      // Main handle
-      0, 0, 0,         // base
-      0, 0.12, 0.05,   // mid
-      
-      // Left fork
-      0, 0.12, 0.05,   // mid
-      -0.05, 0.2, 0.03, // left top
-      
-      // Right fork
-      0, 0.12, 0.05,   // mid
-      0.05, 0.2, 0.03, // right top
-      
-      // Band (left)
-      -0.05, 0.2, 0.03, // left top
-      0, 0.1, -0.05,   // band midpoint
-      
-      // Band (right)
-      0.05, 0.2, 0.03, // right top
-      0, 0.1, -0.05    // band midpoint
-    ]);
-    
-    geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-    const material = new THREE.LineBasicMaterial({ color: 0x664422, linewidth: 2 });
-    
-    // Create line segments for the slingshot
-    this.slingshotModel = new THREE.LineSegments(geometry, material);
-    this.slingshotModel.visible = false; // Initially hidden
-  }
-  
-  /**
-   * Load sound effects for weapons
-   */
-  loadSounds() {
-    // Load sound effects if available - add implementation later
-  }
-  
-  /**
-   * Set up the slingshot model
-   * @param {THREE.Object3D} parent - Parent object to attach slingshot to
-   */
-  setupModel(parent) {
-    if (parent && this.slingshotModel) {
-      parent.add(this.slingshotModel);
-      
-      // Position in view
-      this.slingshotModel.position.set(0.3, -0.2, -0.5);
-      this.slingshotModel.rotation.set(0, Math.PI * 0.05, 0);
-    }
-  }
-  
-  /**
-   * Start charging the current weapon
-   */
-  startCharge() {
-    console.log("🔫 WeaponSystem.startCharge called");
-    
-    // ULTRA ROBUST: Make extra checks to ensure charging works
+  update(deltaTime, playerPosition) {
+    // Update cooldown timer
     if (this.cooldown > 0) {
-      console.warn(`⚠️ Weapon is in cooldown (${this.cooldown.toFixed(2)}s)`);
-      // BYPASS: Force reset cooldown to allow charging
-      this.cooldown = 0;
+      this.cooldown -= deltaTime;
     }
-    
+
+    // Update charge state if charging
     if (this.isCharging) {
-      console.warn("⚠️ Already charging! Resetting state");
-      // BYPASS: Force reset charging state
+      const cameraDirection = new THREE.Vector3();
+      this.camera.getWorldDirection(cameraDirection);
+      this.chargeState = this.projectileSystem.updateCharge(deltaTime, cameraDirection);
+    }
+
+    // Update projectile system with safety check
+    if (this.projectileSystem) {
+      try {
+        this.projectileSystem.update(deltaTime);
+      } catch (err) {
+        console.error("Error updating projectile system:", err);
+      }
+    }
+  }
+
+  /**
+   * Start charging a shot
+   * @returns {Object} Charge state information
+   */
+  startCharging() {
+    // Debug output
+    if (this.debug) console.log("Starting charge...");
+
+    // Check cooldown
+    if (this.cooldown > 0) {
+      if (this.debug) console.log("Weapon on cooldown, can't charge");
+      return null;
+    }
+
+    // Check if we have ammo for the current weapon
+    const ammoType = this.currentWeapon === 'goldenSlingshot' ? 'goldenApple' : 'apple';
+    if (this.ammo[ammoType] <= 0) {
+      if (this.debug) console.log(`No ${ammoType} ammo remaining`);
+      return null;
+    }
+
+    // Not already charging
+    if (!this.isCharging) {
+      // Get current aim direction from camera
+      const direction = new THREE.Vector3();
+      this.camera.getWorldDirection(direction);
+      
+      // Start charging
+      this.isCharging = true;
+      this.chargeState = this.projectileSystem.startCharging(direction);
+      
+      return this.chargeState;
+    }
+    
+    return this.chargeState;
+  }
+
+  /**
+   * Release the charged shot
+   * @param {THREE.Vector3} playerPosition - Current player position
+   * @returns {Object} Information about the fired projectile
+   */
+  releaseShot(playerPosition) {
+    // Not charging or on cooldown
+    if (!this.isCharging || this.cooldown > 0) return null;
+    
+    // Debug log
+    if (this.debug) console.log("Releasing shot...");
+    
+    // Get current camera position and direction
+    const cameraPos = new THREE.Vector3();
+    const cameraDir = new THREE.Vector3();
+    this.camera.getWorldPosition(cameraPos);
+    this.camera.getWorldDirection(cameraDir);
+    
+    // Log these for debugging
+    console.log("Camera position:", cameraPos);
+    console.log("Camera direction:", cameraDir);
+    
+    // Calculate launch position (in front of camera)
+    const launchPos = cameraPos.clone().add(cameraDir.clone().multiplyScalar(2));
+    console.log("Launch position:", launchPos);
+
+    // Determine projectile type based on weapon
+    const projectileType = this.currentWeapon === 'goldenSlingshot' ? 'goldenApple' : 'apple';
+
+    // Release the projectile
+    const result = this.projectileSystem.release(launchPos, {
+      direction: cameraDir,
+      type: projectileType
+    });
+    
+    // If we successfully fired a projectile
+    if (result && result.projectile) {
+      // Reduce ammo
+      this.ammo[projectileType]--;
+      
+      // Set cooldown
+      this.cooldown = this.options.cooldownTime;
+      
+      // Reset charging state
       this.isCharging = false;
+      this.chargeState = null;
+      
+      return {
+        projectile: result.projectile,
+        power: result.power,
+        type: projectileType
+      };
+    } else {
+      // Failed to release projectile
+      this.isCharging = false;
+      this.chargeState = null;
+      return null;
     }
+  }
+
+  /**
+   * Switch between available weapons
+   * @returns {boolean} Whether the switch was successful
+   */
+  switchWeapon() {
+    // Can't switch weapons while charging
+    if (this.isCharging) return false;
     
-    // ULTRA ROBUST: Add emergency ammo if needed
-    if (this.ammo.apple <= 0) {
-      console.warn("⚠️ No ammo! Adding emergency apple");
-      this.ammo.apple = 1;
-    }
+    // Toggle between weapons
+    this.currentWeapon = this.currentWeapon === 'slingshot' ? 'goldenSlingshot' : 'slingshot';
     
-    // Get camera direction
-    const direction = new THREE.Vector3(0, 0, -1);
-    direction.applyQuaternion(this.camera.quaternion);
-    
-    // Start charging
-    this.isCharging = true;
-    this.slingshotModel.visible = true;
-    
-    // Scale the band to show tension
-    this._updateSlingshotTension(0);
-    
-    // Start projectile system charging with a lower initial power
-    const result = this.projectileSystem.startCharging(direction);
-    
-    console.log("🔫 WeaponSystem.startCharge: Charging started successfully", result);
+    // Debug log
+    if (this.debug) console.log(`Switched to ${this.currentWeapon}`);
     
     return true;
   }
-  
+
   /**
-   * Update charging state
-   * @param {number} deltaTime - Time since last frame
+   * Add ammo of a specific type
+   * @param {string} type - Ammo type ('apple', 'goldenApple')
+   * @param {number} amount - Amount to add
+   * @returns {number} New ammo count
    */
-  updateCharge(deltaTime) {
-    if (!this.isCharging) {
-      return null;
-    }
+  addAmmo(type, amount = 1) {
+    if (!this.ammo[type]) return 0;
     
-    // ULTRA ROBUST: Force reasonable deltaTime
-    if (isNaN(deltaTime) || deltaTime > 0.1) {
-      deltaTime = 0.016; // 60fps fallback
-    }
+    this.ammo[type] = Math.min(this.ammo[type] + amount, this.options.maxAmmo[type]);
     
-    // Get camera direction
-    const direction = new THREE.Vector3(0, 0, -1);
-    direction.applyQuaternion(this.camera.quaternion);
+    // Debug output
+    if (this.debug) console.log(`Added ${amount} ${type}. New total: ${this.ammo[type]}`);
     
-    // Update projectile system charge
-    const chargeState = this.projectileSystem.updateCharge(deltaTime, direction);
-    
-    // ULTRA ROBUST: If chargeState indicates not charging, force it to charge anyway
-    if (!chargeState || !chargeState.charging) {
-      console.warn("⚠️ ProjectileSystem reported not charging! Forcing state");
-      this.projectileSystem.startCharging(direction);
-      return {
-        charging: true,
-        power: 0.01,
-        direction: direction.clone()
-      };
-    }
-    
-    // Update slingshot band tension
-    this._updateSlingshotTension(chargeState.power);
-    
-    return chargeState;
+    return this.ammo[type];
   }
-  
+
   /**
-   * Release the weapon to fire
-   */
-  releaseCharge() {
-    if (!this.isCharging) return null;
-    
-    // End charging state
-    this.isCharging = false;
-    this._updateSlingshotTension(0);
-    
-    // IMPROVED: Get correct camera world position and direction
-    // Get the exact world position and orientation of the camera
-    const cameraWorldPos = new THREE.Vector3();
-    const cameraWorldDir = new THREE.Vector3();
-    
-    // This properly gets the world position of the camera
-    this.camera.getWorldPosition(cameraWorldPos);
-    
-    // Get the forward direction in world space
-    this.camera.getWorldDirection(cameraWorldDir);
-    
-    // Calculate launch position - place it slightly in front of the camera
-    // Use a consistent offset that's always visible
-    const launchOffset = 2.0; // 2 units in front of camera
-    const launchPos = cameraWorldPos.clone().addScaledVector(cameraWorldDir, launchOffset);
-    
-    console.log("Camera position:", cameraWorldPos);
-    console.log("Camera direction:", cameraWorldDir);
-    console.log("Launch position:", launchPos);
-    
-    // Determine projectile type
-    const projectileType = (this.currentWeapon === 'goldenSlingshot') ? 'goldenApple' : 'apple';
-    
-    // FIXED: Use the camera's world direction directly instead of trying to access slingshotState
-    // We'll pass the direction directly to the release method instead of setting it on slingshotState
-    
-    // Release the slingshot with updated position and direction
-    const result = this.projectileSystem.release(launchPos, { 
-      type: projectileType,
-      direction: cameraWorldDir // Pass direction as an option
-    });
-    
-    if (result && result.projectile) {
-      // Consume ammo
-      this.ammo[projectileType]--;
-      
-      // Start cooldown
-      this.cooldown = this.rechargeTime;
-      
-      // Play sound
-      this._playSound('release');
-      
-      return result;
-    }
-    
-    return null;
-  }
-  
-  /**
-   * Update slingshot band tension visual
-   * @param {number} power - Current charge power (0-1)
-   */
-  _updateSlingshotTension(power) {
-    // Skip if no model
-    if (!this.slingshotModel) return;
-    
-    // Get position attribute
-    const posAttr = this.slingshotModel.geometry.getAttribute('position');
-    
-    // Band midpoint index (based on our vertex layout)
-    const bandMidIndex = 7 * 3; // index * 3 components
-    
-    // FIXED: Pull band back based on power - increased maximum pull distance
-    const pullDistance = power * 0.3; // Max 30cm pull instead of 20cm
-    
-    // Update band midpoint position
-    posAttr.setXYZ(
-      7, // band midpoint left index
-      0,  // x
-      0.1, // y
-      -0.05 - pullDistance // z - pull back
-    );
-    
-    posAttr.setXYZ(
-      9, // band midpoint right index
-      0,  // x
-      0.1, // y
-      -0.05 - pullDistance // z - pull back
-    );
-    
-    // Mark for update
-    posAttr.needsUpdate = true;
-  }
-  
-  /**
-   * Cancel current charge
+   * Cancel the current charge
    */
   cancelCharge() {
     if (!this.isCharging) return;
     
-    this.isCharging = false;
-    this._updateSlingshotTension(0);
     this.projectileSystem.cancelCharge();
-  }
-  
-  /**
-   * Play a sound effect
-   * @param {string} soundName - Name of sound to play
-   */
-  _playSound(soundName) {
-    // Play sound if available - add implementation later
-  }
-  
-  /**
-   * Switch to a different weapon
-   * @param {string} weaponName - Weapon to switch to
-   */
-  switchWeapon(weaponName) {
-    // Only slingshot for now
-    if (weaponName === 'slingshot' || weaponName === 'goldenSlingshot') {
-      this.cancelCharge(); // Cancel any current charge
-      this.currentWeapon = weaponName;
-      return true;
-    }
-    return false;
-  }
-  
-  /**
-   * Add ammo to inventory
-   * @param {string} type - Ammo type
-   * @param {number} amount - Amount to add
-   */
-  addAmmo(type, amount) {
-    if (this.ammo[type] !== undefined) {
-      this.ammo[type] += amount;
-      return this.ammo[type];
-    }
-    return 0;
-  }
-  
-  /**
-   * Update the weapon system
-   * @param {number} deltaTime - Time since last frame
-   */
-  update(deltaTime) {
-    // ULTRA ROBUST: Force reasonable deltaTime
-    if (isNaN(deltaTime) || deltaTime > 0.1) {
-      deltaTime = 0.016; // 60fps fallback
-    }
+    this.isCharging = false;
+    this.chargeState = null;
     
-    // Update projectiles
-    this.projectileSystem.update(deltaTime);
-    
-    // CRITICAL FIX: The issue is here - we're not properly updating the charge!
-    if (this.isCharging) {
-      // Direct debug to verify update is running
-      console.log(`⏱️ Updating charge, deltaTime: ${deltaTime.toFixed(4)}, isCharging: ${this.isCharging}`);
-      
-      // Explicitly update the charging state
-      const chargeState = this.updateCharge(deltaTime);
-      
-      if (chargeState && chargeState.power) {
-        // Log every 10% to verify power is increasing
-        const powerPercent = Math.floor(chargeState.power * 100);
-        if (powerPercent % 10 === 0 && powerPercent > 0) {
-          console.log(`🔋 Charge at ${powerPercent}%`);
-        }
-      }
-    }
-    
-    // CRITICAL FIX: Check for state mismatch between weapon system and projectile system
-    if (this.isCharging && this.projectileSystem.slingshotState && 
-        !this.projectileSystem.slingshotState.charging) {
-      console.error("⚠️ State mismatch! WeaponSystem.isCharging=true but ProjectileSystem.slingshotState.charging=false");
-      // Force fix the state
-      this.projectileSystem.slingshotState.charging = true;
-    }
-    
-    // Update cooldown
-    if (this.cooldown > 0) {
-      this.cooldown = Math.max(0, this.cooldown - deltaTime);
-    }
+    // FIXED: Add debug output
+    console.log("Charge canceled");
   }
-  
+
   /**
-   * Get current weapon state
+   * Get the current weapon state
+   * @returns {Object} Weapon state information
    */
   getState() {
     return {
       currentWeapon: this.currentWeapon,
       isCharging: this.isCharging,
+      chargeState: this.chargeState,
       cooldown: this.cooldown,
-      rechargeTime: this.rechargeTime,
       ammo: { ...this.ammo },
-      chargeState: this.isCharging ? this.projectileSystem.getSlingshotState() : null
+      projectileCount: this.projectileSystem?.projectiles?.length || 0,
+      poolSize: this.projectileSystem?.projectilePool?.length || 0
     };
   }
-  
-  // Modify fire method to add screen shake on powerful shots
-  fire(position, direction, type = 'apple') {
-    // Get reference to projectile system
-    const projectileSystem = this.projectileSystem;
-    if (!projectileSystem) return null;
-    
-    // Create projectile
-    const result = projectileSystem.release(position, {
-      direction,
-      type
-    });
-    
-    // Add screen shake based on power
-    if (result && result.power > 0.7 && this.camera && typeof this.camera.shake === 'function') {
-      const shakeAmount = result.power * 0.3; // Proportional to shot power
-      this.camera.shake(shakeAmount, 0.2);
+
+  /**
+   * Enable or disable debug mode
+   * @param {boolean} enable - Whether to enable debugging
+   */
+  setDebug(enable = true) {
+    this.debug = enable;
+    if (this.projectileSystem) {
+      this.projectileSystem.debug = enable;
     }
-    
-    // ... rest of method ...
+    console.log(`Weapon system debug mode ${enable ? 'enabled' : 'disabled'}`);
   }
 }
+
+// Just confirming that these are the correct method names
+// startCharging() - Called by Player.fireWeapon()
+// releaseShot() - Called by Player.releaseWeapon()
+// cancelCharge() - Called by Player.cancelWeapon()
+
+// No changes needed in this file, as the player.js file has been updated to match 
+// the method names defined here.
