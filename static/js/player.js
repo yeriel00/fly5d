@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import SphereControls from './SphereControls.js';
 import OrientationHelper from './OrientationHelper.js';
+import WeaponSystem from './WeaponSystem.js';
 
 /**
  * Player class that manages the first-person character
@@ -41,6 +42,25 @@ export default class Player {
     if (this.options.debugMode) {
       this._createDebugBody();
     }
+
+    // Initialize weapon system
+    this.weaponSystem = new WeaponSystem(scene, this.camera, {
+      sphereRadius: this.options.sphereRadius,
+      gravity: this.options.gravity * 0.75, // Use slightly less gravity for projectiles
+      projectileSpeed: 40,
+      projectileRadius: 0.8,
+      getTerrainHeight: this.options.getTerrainHeight,
+      collidables: this.options.collidables
+    });
+    
+    // Set up weapon models
+    this.weaponSystem.setupModel(this.camera);
+    
+    // Weapon input state
+    this.weaponInput = {
+      firing: false,
+      weaponSwitchTimer: 0
+    };
   }
 
   /**
@@ -139,6 +159,14 @@ export default class Player {
     
     // Re-orthonormalize player axes - STILL IMPORTANT
     this.orientHelper.update();
+
+    // Update the weapon system
+    this.weaponSystem.update(delta);
+    
+    // Update weapon switch timer
+    if (this.weaponInput.weaponSwitchTimer > 0) {
+      this.weaponInput.weaponSwitchTimer -= delta;
+    }
   }
 
   /**
@@ -228,5 +256,59 @@ export default class Player {
       this.camera.aspect = width / height;
       this.camera.updateProjectionMatrix();
     }
+  }
+
+  /**
+   * Fire the weapon
+   */
+  fireWeapon() {
+    if (!this.weaponInput.firing) {
+      this.weaponInput.firing = true;
+      return this.weaponSystem.startCharge();
+    }
+    return false;
+  }
+
+  /**
+   * Release the weapon
+   */
+  releaseWeapon() {
+    if (this.weaponInput.firing) {
+      this.weaponInput.firing = false;
+      return this.weaponSystem.releaseCharge();
+    }
+    return null;
+  }
+
+  /**
+   * Switch the weapon
+   */
+  switchWeapon() {
+    // Prevent rapid switching
+    if (this.weaponInput.weaponSwitchTimer > 0) return false;
+    
+    const state = this.weaponSystem.getState();
+    const newWeapon = state.currentWeapon === 'slingshot' ? 'goldenSlingshot' : 'slingshot';
+    
+    const result = this.weaponSystem.switchWeapon(newWeapon);
+    if (result) {
+      this.weaponInput.weaponSwitchTimer = 0.5; // 500ms cooldown
+    }
+    
+    return result;
+  }
+
+  /**
+   * Get the weapon state
+   */
+  getWeaponState() {
+    return this.weaponSystem.getState();
+  }
+
+  /**
+   * Add ammo to the weapon
+   */
+  addAmmo(type, amount) {
+    return this.weaponSystem.addAmmo(type, amount);
   }
 }

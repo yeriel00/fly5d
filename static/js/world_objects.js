@@ -136,7 +136,7 @@ export function initEnvironment(scene, quality, config = {}, callback) {
     if (mesh.geometry) mesh.geometry.computeVertexNormals();
     else if (mesh instanceof THREE.Group) mesh.traverse(child => { if (child.geometry) child.geometry.computeVertexNormals(); });
 
-    // Collision radius calculation (remains the same)
+    // Collision radius calculation (improved for better accuracy)
     let radius = 1.0;
     let collisionHeight = 0;
     const isTree = mesh.name?.includes('Tree') || mesh.userData?.isTree || mesh.userData?.isPineTree;
@@ -144,22 +144,70 @@ export function initEnvironment(scene, quality, config = {}, callback) {
     const isCabin = mesh.name?.includes('Cabin');
 
     if (isTree) {
-        const totalHeight = mesh.userData?.totalHeight || mesh.userData?.height || heightOffset * 2;
-        radius = totalHeight * 0.25;
-        collisionHeight = totalHeight * 0.9;
+      // Get actual trunk dimensions for accurate collision
+      const totalHeight = mesh.userData?.totalHeight || mesh.userData?.height || heightOffset * 2;
+      
+      // IMPROVED: Calculate trunk radius more precisely by examining the trunk mesh
+      let trunkRadius = 0;
+      mesh.traverse(child => {
+        if (child.isMesh && 
+           (child.material?.color?.r < 0.5 && child.material?.color?.g < 0.5)) {
+          // This is probably the trunk (brown color)
+          if (child.geometry.boundingSphere) {
+            // Get actual trunk radius from geometry
+            trunkRadius = Math.max(trunkRadius, child.geometry.boundingSphere.radius * 0.6);
+          }
+        }
+      });
+      
+      // If we couldn't determine trunk radius, fallback to estimate
+      if (trunkRadius === 0) {
+        trunkRadius = totalHeight * 0.03; // 3% of total height
+      }
+      
+      // Store ACTUAL trunk radius for collision detection
+      radius = Math.max(0.5, trunkRadius); // Minimum 0.5 units
+      collisionHeight = totalHeight * 0.7;
+      
+      // Store additional tree data for more precise collision
+      mesh.userData.trunkRadius = radius;
+      mesh.userData.trunkHeight = collisionHeight;
     } else if (isRock) {
-        if (mesh instanceof THREE.Mesh && mesh.geometry.boundingSphere) radius = mesh.geometry.boundingSphere.radius * 1.2;
-        else radius = Math.max(mesh.scale.x, mesh.scale.y, mesh.scale.z) * 2;
+      if (mesh instanceof THREE.Mesh && mesh.geometry.boundingSphere) {
+        // Use actual mesh bounding sphere for rocks
+        radius = mesh.geometry.boundingSphere.radius * 0.9; // 90% of bounding sphere
+      } else {
+        radius = Math.max(mesh.scale.x, mesh.scale.y, mesh.scale.z) * 1.5;
+      }
     } else if (isCabin) {
-        radius = 10;
+      radius = 8; // Tighter collision for cabins
     } else {
-        if (mesh instanceof THREE.Mesh && mesh.geometry.boundingSphere) radius = mesh.geometry.boundingSphere.radius;
-        else if (mesh instanceof THREE.Group) radius = Math.max(mesh.scale.x, mesh.scale.y, mesh.scale.z) * 2;
+      if (mesh instanceof THREE.Mesh && mesh.geometry.boundingSphere) {
+        radius = mesh.geometry.boundingSphere.radius;
+      } else if (mesh instanceof THREE.Group) {
+        radius = Math.max(mesh.scale.x, mesh.scale.y, mesh.scale.z) * 1.5;
+      }
     }
 
-    const collidable = { mesh, position: mesh.position.clone(), radius, direction: dir.clone(), heightOffset, baseRadius, collisionHeight };
+    const collidable = { 
+      mesh, 
+      position: mesh.position.clone(), 
+      radius, 
+      direction: dir.clone(), 
+      heightOffset, 
+      baseRadius, 
+      collisionHeight,
+      // IMPROVED: Add more precise collision metadata 
+      actualRadius: radius, // Actual physical radius (not collision radius)
+      objectType: isTree ? 'tree' : isRock ? 'rock' : isCabin ? 'cabin' : 'object'
+    };
+    
     Object.assign(collidable, mesh.userData); // Copy userData
-    if (mesh.userData?.isGrass || mesh.name?.toLowerCase().includes('grass')) collidable.noCollision = true;
+    
+    // Special settings for grass
+    if (mesh.userData?.isGrass || mesh.name?.toLowerCase().includes('grass')) {
+      collidable.noCollision = true;
+    }
 
     collidables.push(collidable);
     return true;

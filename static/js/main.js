@@ -473,6 +473,9 @@ initEnvironment(scene, 'medium', worldConfig, (placerFunc) => {
   //  Initialize FX Manager AFTER player is created, using player's camera
   fxManager = new FXManager(scene, player.getCamera(), renderer);
   
+  // Initialize player UI including weapon controls
+  initializePlayerUI();
+  
   // Start animation loop after player is created
   animate();
 });
@@ -1073,3 +1076,891 @@ function setupDebugCommands() {
 
 // Call at startup
 setupDebugCommands();
+
+// Add event listeners for weapon actions
+function setupWeaponControls() {
+  // Mouse controls for slingshot
+  document.addEventListener('mousedown', (e) => {
+    if (e.button === 0 && player) { // Left mouse button
+      player.fireWeapon();
+      
+      // Show feedback in debug console
+      const weaponState = player.getWeaponState();
+      console.log(`Charging ${weaponState.currentWeapon}...`);
+    }
+  });
+  
+  document.addEventListener('mouseup', (e) => {
+    if (e.button === 0 && player) { // Left mouse button
+      const result = player.releaseWeapon();
+      
+      if (result && result.projectile) {
+        console.log(`Fired ${result.projectile.type} with power ${result.power.toFixed(2)}`);
+      }
+    }
+  });
+  
+  // Weapon switching
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'q' && player) {
+      const oldState = player.getWeaponState();
+      const switched = player.switchWeapon();
+      
+      if (switched) {
+        const newState = player.getWeaponState();
+        console.log(`Switched from ${oldState.currentWeapon} to ${newState.currentWeapon}`);
+      }
+    }
+  });
+}
+
+// Add this call after player initialization
+function initializePlayerUI() {
+  // Set up weapon controls
+  setupWeaponControls();
+  
+  // Add ammo UI element
+  const ammoDisplay = document.createElement('div');
+  ammoDisplay.id = 'ammo-display';
+  ammoDisplay.style.position = 'absolute';
+  ammoDisplay.style.bottom = '20px';
+  ammoDisplay.style.right = '20px';
+  ammoDisplay.style.color = 'white';
+  ammoDisplay.style.fontFamily = 'Arial, sans-serif';
+  ammoDisplay.style.fontSize = '18px';
+  ammoDisplay.style.padding = '10px';
+  ammoDisplay.style.background = 'rgba(0, 0, 0, 0.5)';
+  ammoDisplay.style.borderRadius = '5px';
+  document.body.appendChild(ammoDisplay);
+  
+  // Add power meter for slingshot charging
+  const powerMeter = document.createElement('div');
+  powerMeter.id = 'power-meter';
+  powerMeter.style.position = 'absolute';
+  powerMeter.style.bottom = '20px';
+  powerMeter.style.left = '50%';
+  powerMeter.style.transform = 'translateX(-50%)';
+  powerMeter.style.width = '200px';
+  powerMeter.style.height = '10px';
+  powerMeter.style.background = 'rgba(0, 0, 0, 0.5)';
+  powerMeter.style.borderRadius = '5px';
+  powerMeter.style.overflow = 'hidden';
+  powerMeter.style.display = 'none';
+  
+  const powerFill = document.createElement('div');
+  powerFill.id = 'power-fill';
+  powerFill.style.width = '0%';
+  powerFill.style.height = '100%';
+  powerFill.style.background = 'red';
+  powerFill.style.transition = 'width 0.05s';
+  
+  powerMeter.appendChild(powerFill);
+  document.body.appendChild(powerMeter);
+  
+  // Update UI in animation loop
+  function updateUI() {
+    if (!player) return;
+    
+    const weaponState = player.getWeaponState();
+    
+    // Update ammo display
+    ammoDisplay.textContent = `${weaponState.currentWeapon === 'slingshot' ? 'Apples' : 'Golden Apples'}: ${
+      weaponState.currentWeapon === 'slingshot' ? weaponState.ammo.apple : weaponState.ammo.goldenApple
+    }`;
+    
+    // Update power meter
+    if (weaponState.isCharging && weaponState.chargeState) {
+      powerMeter.style.display = 'block';
+      powerFill.style.width = `${weaponState.chargeState.power * 100}%`;
+    } else {
+      powerMeter.style.display = 'none';
+    }
+    
+    requestAnimationFrame(updateUI);
+  }
+  
+  // Start UI update loop
+  updateUI();
+  
+  // Add debug commands
+  window.giveAmmo = (type = 'apple', amount = 10) => {
+    if (!player) return "Player not initialized";
+    const newAmount = player.addAmmo(type, amount);
+    console.log(`Added ${amount} ${type}(s). New total: ${newAmount}`);
+    return newAmount;
+  };
+  
+  console.log(`
+  // *****************************************
+  // ***** WEAPON CONTROLS *****
+  // *****************************************
+  Mouse 1 (hold): Charge slingshot
+  Mouse 1 (release): Fire projectile
+  Q: Switch between regular and golden slingshot
+  
+  // Debug command:
+  giveAmmo('apple', 10)    // Add 10 apple ammo
+  giveAmmo('goldenApple', 5) // Add 5 golden apple ammo
+  `);
+
+  // Add debug visibility controls for projectiles
+  window.debugProjectiles = (enable = true) => {
+    if (!player?.weaponSystem?.projectileSystem) return "Projectile system not initialized";
+    
+    // Add highlight effect to all active projectiles
+    const projectiles = player.weaponSystem.projectileSystem.projectiles;
+    
+    if (enable) {
+      // Add glowing effect to projectiles
+      projectiles.forEach(projectile => {
+        // Add point light to make projectile more visible
+        const pointLight = new THREE.PointLight(0xff8800, 1, 10);
+        projectile.mesh.add(pointLight);
+        projectile.debugLight = pointLight;
+        
+        // Increase size of projectile
+        projectile.mesh.scale.set(2, 2, 2);
+      });
+      console.log(`Enhanced visibility for ${projectiles.length} projectiles`);
+    } else {
+      // Remove debug enhancements
+      projectiles.forEach(projectile => {
+        if (projectile.debugLight) {
+          projectile.mesh.remove(projectile.debugLight);
+          delete projectile.debugLight;
+        }
+        projectile.mesh.scale.set(1, 1, 1);
+      });
+      console.log("Removed projectile enhancements");
+    }
+    
+    return `${projectiles.length} projectiles affected`;
+  };
+  
+  // Give player initial ammo at startup
+  setTimeout(() => {
+    if (player) {
+      player.addAmmo('apple', 20);
+      player.addAmmo('goldenApple', 5);
+      console.log("Initial ammo loaded: 20 apples, 5 golden apples");
+    }
+  }, 1000);
+  
+  // Add debug command to console help
+  console.log(`
+  // *****************************************
+  // ***** VISIBILITY COMMANDS *****
+  // *****************************************
+  debugProjectiles()         // Make projectiles more visible
+  debugProjectiles(false)    // Normal projectile visibility
+  `);
+
+  // Add debug command for camera direction and projectile testing
+  window.testFire = () => {
+    if (!player || !player.weaponSystem) return "Player weapon system not initialized";
+    
+    // Get camera position and direction
+    const camera = player.getCamera();
+    const cameraPos = new THREE.Vector3();
+    const cameraDir = new THREE.Vector3();
+    
+    camera.getWorldPosition(cameraPos);
+    camera.getWorldDirection(cameraDir);
+    
+    console.log("Camera world position:", cameraPos);
+    console.log("Camera world direction:", cameraDir);
+    
+    // Force fire an apple as a test
+    const testPosition = cameraPos.clone().addScaledVector(cameraDir, 2);
+    const testVelocity = cameraDir.clone().multiplyScalar(40);
+    
+    const projectile = player.weaponSystem.projectileSystem.createProjectile(
+      testPosition,
+      testVelocity,
+      'apple'
+    );
+    
+    // Add visual helpers
+    // Direction line
+    const dirHelper = new THREE.ArrowHelper(
+      cameraDir.clone(),
+      cameraPos.clone(),
+      5,
+      0xff0000,
+      0.5,
+      0.3
+    );
+    scene.add(dirHelper);
+    
+    // Force the projectile system to process updates
+    player.weaponSystem.projectileSystem.update(0.16);
+    
+    return "Test projectile fired";
+  };
+  
+  // Add debug command to console help
+  console.log(`
+  // *****************************************
+  // ***** PROJECTILE TESTING COMMANDS *****
+  // *****************************************
+  testFire()               // Fire a test apple and visualize camera direction
+  `);
+
+  // Add trajectory visualizer for testing projectile physics
+  window.showTrajectory = (steps = 20) => {
+    if (!player?.weaponSystem?.projectileSystem) return "Weapon system not available";
+    
+    // Get camera direction and position
+    const camera = player.getCamera();
+    const cameraPos = new THREE.Vector3();
+    const cameraDir = new THREE.Vector3();
+    
+    camera.getWorldPosition(cameraPos);
+    camera.getWorldDirection(cameraDir);
+    
+    // Calculate initial velocity
+    const speed = player.weaponSystem.options.projectileSpeed;
+    const velocity = cameraDir.clone().multiplyScalar(speed);
+    
+    // Create a trail of spheres showing trajectory
+    const projectileSystem = player.weaponSystem.projectileSystem;
+    const sphereRadius = projectileSystem.options.projectileRadius * 0.5;
+    const gravity = projectileSystem.options.gravity;
+    const sphereR = projectileSystem.options.sphereRadius;
+    
+    // Calculate trajectory points
+    const points = [];
+    let pos = cameraPos.clone().addScaledVector(cameraDir, 2); // Start in front of camera
+    let vel = velocity.clone();
+    const deltaTime = 0.1; // simulate in 100ms steps
+    
+    for (let i = 0; i < steps; i++) {
+      // Add point
+      points.push(pos.clone());
+      
+      // Calculate next position
+      const dir = pos.clone().normalize();
+      
+      // Apply gravity
+      const flightTime = i * deltaTime;
+      const gravityMult = Math.min(1.0 + flightTime * 0.25, 2.0);
+      vel.addScaledVector(dir.negate(), gravity * gravityMult * deltaTime * 60);
+      
+      // Apply velocity
+      pos.addScaledVector(vel, deltaTime);
+      
+      // Check for terrain collision
+      const terrainHeight = projectileSystem.options.getTerrainHeight(pos.clone().normalize());
+      const terrainRadius = sphereR + terrainHeight;
+      
+      if (pos.length() < terrainRadius + sphereRadius) {
+        break; // Stop at collision
+      }
+    }
+    
+    // Visualize the trajectory
+    // Remove any existing trajectory markers
+    scene.traverse(obj => {
+      if (obj.userData?.isTrajectoryMarker) {
+        scene.remove(obj);
+      }
+    });
+    
+    // Add spheres along trajectory
+    points.forEach((point, i) => {
+      const sphereGeo = new THREE.SphereGeometry(sphereRadius * (1.0 - i/steps * 0.7), 8, 6);
+      const sphereMat = new THREE.MeshBasicMaterial({
+        color: i === 0 ? 0xff0000 : 0xffaa00,
+        wireframe: true,
+        opacity: 1.0 - (i / steps * 0.8),
+        transparent: true
+      });
+      
+      const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+      sphere.position.copy(point);
+      sphere.userData = { isTrajectoryMarker: true };
+      scene.add(sphere);
+    });
+    
+    return `Created trajectory preview with ${points.length} points`;
+  };
+  
+  // Add clear function for trajectory preview
+  window.clearTrajectory = () => {
+    scene.traverse(obj => {
+      if (obj.userData?.isTrajectoryMarker) {
+        scene.remove(obj);
+      }
+    });
+    return "Trajectory markers cleared";
+  };
+  
+  console.log(`
+  // *****************************************
+  // ***** ENHANCED PROJECTILE COMMANDS *****
+  // *****************************************
+  showTrajectory(30)      // Show predicted projectile path (with 30 points)
+  clearTrajectory()       // Remove trajectory visualization
+  `);
+
+  // Add a debug function to help inspect and visualize precise collision shapes
+  window.showPreciseCollisions = () => {
+    if (!scene) return "Scene not available";
+    
+    // Clear any existing visualizers
+    scene.traverse(obj => {
+      if (obj.userData?.isCollisionHelper) {
+        scene.remove(obj);
+      }
+    });
+    
+    // Add new precise collision visualizers
+    collidables.forEach((obj, index) => {
+      if (!obj.direction || !obj.position || index === 0) return; // Skip planet or invalid objects
+      
+      // Different visualization based on object type
+      if (obj.mesh.userData?.isTree || obj.mesh.userData?.isPineTree) {
+        // For trees, show actual trunk cylinder
+        const trunkRadius = obj.actualRadius || Math.max(0.5, obj.radius * 0.25);
+        const trunkHeight = obj.collisionHeight || (obj.radius * 2);
+        
+        // Trunk visualization (red wireframe)
+        const trunkGeometry = new THREE.CylinderGeometry(trunkRadius, trunkRadius, trunkHeight, 8);
+        const trunkMaterial = new THREE.MeshBasicMaterial({
+          color: 0xff0000,
+          wireframe: true,
+          opacity: 0.5,
+          transparent: true
+        });
+        
+        const trunkHelper = new THREE.Mesh(trunkGeometry, trunkMaterial);
+        trunkHelper.position.copy(obj.position);
+        trunkHelper.position.add(obj.direction.clone().multiplyScalar(trunkHeight / 2));
+        trunkHelper.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), obj.direction);
+        trunkHelper.userData = { isCollisionHelper: true };
+        scene.add(trunkHelper);
+        
+        // Foliage visualization if it's an apple tree (green wireframe)
+        if (obj.mesh.name === "AppleTree" || obj.mesh.userData?.isTree) {
+          const foliageRadius = obj.radius * 0.6; // 60% of the original collision radius
+          const foliageHeight = obj.radius * 2;
+          const foliageGeometry = new THREE.SphereGeometry(foliageRadius, 8, 6);
+          const foliageMaterial = new THREE.MeshBasicMaterial({
+            color: 0x00ff00,
+            wireframe: true,
+            opacity: 0.3,
+            transparent: true
+          });
+          
+          const foliageHelper = new THREE.Mesh(foliageGeometry, foliageMaterial);
+          foliageHelper.position.copy(obj.position);
+          foliageHelper.position.add(obj.direction.clone().multiplyScalar(trunkHeight + foliageRadius * 0.5));
+          foliageHelper.userData = { isCollisionHelper: true };
+          scene.add(foliageHelper);
+        }
+      } else {
+        // For other objects, use a simple sphere with actual radius
+        const radius = obj.actualRadius || obj.radius * 0.7;
+        const helper = new THREE.Mesh(
+          new THREE.SphereGeometry(radius, 12, 8),
+          new THREE.MeshBasicMaterial({
+            color: obj.mesh.userData?.isRock ? 0xff9900 : 0x0099ff,
+            wireframe: true,
+            opacity: 0.3,
+            transparent: true
+          })
+        );
+        helper.position.copy(obj.position);
+        helper.userData = { isCollisionHelper: true };
+        scene.add(helper);
+      }
+    });
+    
+    return "Showing precise collision shapes";
+  };
+  
+  // Add helper to check projectile collision with a specific object
+  window.testCollisionWith = (objectIndex) => {
+    if (!collidables[objectIndex]) return "Invalid object index";
+    
+    const obj = collidables[objectIndex];
+    console.log("Testing collision with:", obj);
+    
+    // Get current camera position and direction
+    const camera = player.getCamera();
+    const cameraPos = new THREE.Vector3();
+    const cameraDir = new THREE.Vector3();
+    
+    camera.getWorldPosition(cameraPos);
+    camera.getWorldDirection(cameraDir);
+    
+    // Create test projectile
+    const testPos = cameraPos.clone().addScaledVector(cameraDir, 2); // Start in front of camera
+    const projectileSystem = player.weaponSystem.projectileSystem;
+    
+    // Advanced collision test
+    const projectileDir = testPos.clone().normalize();
+    const objDir = obj.direction;
+    const dot = projectileDir.dot(objDir);
+    const angle = Math.acos(Math.min(Math.max(dot, -1), 1));
+    
+    // Surface distance
+    const surfaceDist = angle * projectileSystem.options.sphereRadius;
+    
+    console.log({
+      objectName: obj.mesh?.name || 'Unknown',
+      objectType: obj.mesh?.userData?.isTree ? 'Tree' : obj.mesh?.userData?.isRock ? 'Rock' : 'Other',
+      surfaceDistance: surfaceDist.toFixed(2),
+      radius: obj.radius,
+      actualRadius: obj.actualRadius || obj.radius,
+      collisionHeight: obj.collisionHeight,
+      collisionWouldOccur: surfaceDist < (obj.actualRadius || obj.radius * 0.7) + projectileSystem.options.projectileRadius
+    });
+    
+    // Create visual line from camera to object for debugging
+    const lineGeometry = new THREE.BufferGeometry().setFromPoints([
+      testPos,
+      obj.position
+    ]);
+    const lineMaterial = new THREE.LineBasicMaterial({
+      color: 0xff0000,
+      linewidth: 3
+    });
+    const line = new THREE.Line(lineGeometry, lineMaterial);
+    line.userData = { isCollisionHelper: true };
+    scene.add(line);
+    
+    return "Collision test complete";
+  };
+  
+  // Add commands to console help
+  console.log(`
+  // *****************************************
+  // ***** COLLISION DEBUGGING COMMANDS *****
+  // *****************************************
+  showPreciseCollisions()    // Visualize actual collision shapes
+  testCollisionWith(5)       // Test collision with object at index 5
+  `);
+
+  // Add debug controls for collision responsiveness
+  window.toggleCollisionDebug = (enable = true) => {
+    if (!player?.weaponSystem?.projectileSystem) return "Projectile system not available";
+    
+    const projectileSystem = player.weaponSystem.projectileSystem;
+    projectileSystem.debug = enable;
+    
+    console.log(`Collision debug visualization ${enable ? 'enabled' : 'disabled'}`);
+    return `Collision debugging ${enable ? 'ON' : 'OFF'}`;
+  };
+  
+  // Add high precision collision tester that creates a grid of test points
+  window.testCollisionPrecision = (objectIndex, gridSize = 5) => {
+    if (!collidables[objectIndex]) return "Invalid object index";
+    
+    const obj = collidables[objectIndex];
+    console.log("Testing precise collision with:", obj);
+    
+    // Get object properties
+    const objPos = obj.position.clone();
+    const objDir = obj.direction.clone();
+    const isTree = obj.mesh?.userData?.isTree || obj.mesh?.userData?.isPineTree;
+    
+    // Get object radius
+    let objRadius = obj.radius;
+    if (isTree) {
+      objRadius = Math.min(obj.radius * 0.25, 0.8); // Trunk radius
+    }
+    
+    // Create visual for object collision radius
+    const geoHelper = new THREE.SphereGeometry(objRadius, 16, 12);
+    const matHelper = new THREE.MeshBasicMaterial({
+      color: 0xff0000,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.5
+    });
+    const sphereHelper = new THREE.Mesh(geoHelper, matHelper);
+    sphereHelper.position.copy(objPos);
+    sphereHelper.userData = { isCollisionHelper: true };
+    scene.add(sphereHelper);
+    
+    // Create test points in a grid around the object
+    const points = [];
+    const gridHalfSize = (gridSize - 1) / 2;
+    const spacing = objRadius * 0.5;
+    
+    // Create basis vectors for the grid (tangent to sphere surface)
+    const up = objDir.clone();
+    const tangent1 = new THREE.Vector3(1, 0, 0).cross(up);
+    if (tangent1.lengthSq() < 0.01) {
+      tangent1.set(0, 0, 1).cross(up);
+    }
+    tangent1.normalize();
+    
+    const tangent2 = up.clone().cross(tangent1).normalize();
+    
+    // Create grid of test points
+    for (let x = -gridHalfSize; x <= gridHalfSize; x++) {
+      for (let y = -gridHalfSize; y <= gridHalfSize; y++) {
+        // Create offset vector in tangent plane
+        const offset = tangent1.clone().multiplyScalar(x * spacing)
+                      .add(tangent2.clone().multiplyScalar(y * spacing));
+        
+        // Create test point position
+        const testPos = objPos.clone().add(offset);
+        
+        // Ensure point is on the sphere surface
+        const dirToSphere = testPos.clone().normalize();
+        const sphereSurfacePos = dirToSphere.multiplyScalar(R + 0.5); // Just above surface
+        
+        // Create visual marker for test point
+        const pointGeo = new THREE.SphereGeometry(0.1, 8, 6);
+        const pointMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+        const pointMesh = new THREE.Mesh(pointGeo, pointMat);
+        pointMesh.position.copy(sphereSurfacePos);
+        pointMesh.userData = { isCollisionHelper: true };
+        scene.add(pointMesh);
+        
+        points.push({
+          mesh: pointMesh,
+          position: sphereSurfacePos.clone()
+        });
+      }
+    }
+    
+    // Report results
+    console.log(`Created ${points.length} test points around object`);
+    
+    // Create test projectiles from each point toward the object
+    points.forEach(point => {
+      // Direction from point to object center
+      const dirToObj = objPos.clone().sub(point.position).normalize();
+      
+      // Create line showing test ray
+      const lineGeo = new THREE.BufferGeometry().setFromPoints([
+        point.position,
+        objPos
+      ]);
+      const lineMat = new THREE.LineBasicMaterial({ 
+        color: 0x00ffff,
+        transparent: true,
+        opacity: 0.5
+      });
+      const line = new THREE.Line(lineGeo, lineMat);
+      line.userData = { isCollisionHelper: true };
+      scene.add(line);
+      
+      // Test collision detection
+      const dir1 = point.position.clone().normalize();
+      const dir2 = objDir;
+      const dot = dir1.dot(dir2);
+      const angle = Math.acos(Math.min(Math.max(dot, -1), 1));
+      const surfaceDist = angle * R;
+      
+      // Show result
+      const wouldCollide = isTree ? 
+        (surfaceDist < objRadius + 1.0) : // For trees (trunk)
+        (surfaceDist < objRadius + 1.0);  // For other objects
+        
+      point.mesh.material.color.set(wouldCollide ? 0x00ff00 : 0xff0000);
+    });
+    
+    // Add cleanup function
+    return "Collision test grid created";
+  };
+  
+  // Add command to adjust projectile radius
+  window.adjustProjectileRadius = (multiplier = 1.0) => {
+    if (!player?.weaponSystem?.projectileSystem) return "Projectile system not available";
+    
+    const oldRadius = player.weaponSystem.projectileSystem.options.projectileRadius;
+    player.weaponSystem.projectileSystem.options.projectileRadius = oldRadius * multiplier;
+    
+    const newRadius = player.weaponSystem.projectileSystem.options.projectileRadius;
+    console.log(`Projectile radius adjusted from ${oldRadius.toFixed(2)} to ${newRadius.toFixed(2)}`);
+    
+    return { oldRadius, newRadius };
+  };
+  
+  // Add commands to console help
+  console.log(`
+  // *****************************************
+  // ***** COLLISION PRECISION CONTROLS *****
+  // *****************************************
+  toggleCollisionDebug(true)     // Show collision checks in real-time
+  testCollisionPrecision(5, 7)   // Test collision with object 5 using 7x7 grid
+  adjustProjectileRadius(1.2)    // Make projectiles 20% larger for collision
+  `);
+
+  // Add projectile system tweaker for fine tuning collision detection
+  window.tweakProjectileCollision = (settings = {}) => {
+    if (!player?.weaponSystem?.projectileSystem) 
+      return "Projectile system not available";
+    
+    const system = player.weaponSystem.projectileSystem;
+    const oldSettings = {
+      projectileRadius: system.options.projectileRadius,
+      bounceFactor: system.options.bounceFactor,
+      minBounceSpeed: system.options.minBounceSpeed
+    };
+    
+    // Apply new settings
+    if (settings.projectileRadius !== undefined) {
+      system.options.projectileRadius = settings.projectileRadius;
+    }
+    
+    if (settings.bounceFactor !== undefined) {
+      system.options.bounceFactor = settings.bounceFactor;
+    }
+    
+    if (settings.minBounceSpeed !== undefined) {
+      system.options.minBounceSpeed = settings.minBounceSpeed;
+    }
+    
+    console.log("Previous settings:", oldSettings);
+    console.log("New settings:", {
+      projectileRadius: system.options.projectileRadius,
+      bounceFactor: system.options.bounceFactor,
+      minBounceSpeed: system.options.minBounceSpeed
+    });
+    
+    return "Projectile collision settings updated";
+  };
+  
+  // Optimize specifically for tree collisions
+  window.optimizeTreeCollision = () => {
+    // Apply a preset of parameters known to work well with trees
+    if (!player?.weaponSystem?.projectileSystem) 
+      return "Projectile system not available";
+    
+    const system = player.weaponSystem.projectileSystem;
+    
+    // Apply optimized settings for tree collisions
+    system.options.projectileRadius = 1.5;  // Increased radius
+    system.options.bounceFactor = 0.5;     // Reduced bounce for better control
+    system.options.minBounceSpeed = 4.0;   // Stop bouncing sooner
+    
+    // Force enable collision debugging
+    system.debug = true;
+    
+    console.log("Tree collision optimization applied!");
+    console.log("Projectile radius increased to 1.5");
+    console.log("Collision debugging enabled");
+    
+    return "Tree collision optimization complete";
+  };
+  
+  // Add special tree penetration fix
+  window.fixTreePenetration = () => {
+    if (!collidables) return "Collidables not available";
+    
+    // Modify all tree collision volumes to be more robust
+    let treeCount = 0;
+    
+    collidables.forEach(obj => {
+      const isTree = obj.mesh?.userData?.isTree || obj.mesh?.userData?.isPineTree;
+      if (isTree) {
+        // Force increase collision radius for all trees
+        obj.radius *= 1.2;  // 20% wider radius
+        
+        // Ensure trunk radius is never too small
+        if (obj.trunkRadius < 0.8) {
+          obj.trunkRadius = Math.max(0.8, obj.trunkRadius);
+        }
+        
+        // Ensure collision height is set properly
+        if (!obj.collisionHeight) {
+          obj.collisionHeight = obj.radius * 2.5;
+        }
+        
+        treeCount++;
+      }
+    });
+    
+    return `Adjusted collision parameters for ${treeCount} trees`;
+  };
+  
+  // Add command to show tree collision volumes
+  window.showTreeCollisions = () => {
+    if (!scene) return "Scene not available";
+    
+    // Remove any existing helpers
+    scene.traverse(obj => {
+      if (obj.userData?.isTreeHelper) {
+        scene.remove(obj);
+      }
+    });
+    
+    // Add visualization for tree collision volumes
+    let count = 0;
+    collidables.forEach(obj => {
+      const isTree = obj.mesh?.userData?.isTree || obj.mesh?.userData?.isPineTree;
+      if (!isTree || !obj.position || !obj.direction) return;
+      
+      // Create trunk cylinder (red)
+      const trunkRadius = obj.trunkRadius || Math.max(0.5, obj.radius * 0.2);
+      const trunkHeight = obj.collisionHeight || obj.radius * 2;
+      
+      const trunkGeo = new THREE.CylinderGeometry(trunkRadius, trunkRadius, trunkHeight, 8);
+      const trunkMat = new THREE.MeshBasicMaterial({
+        color: 0xff0000,
+        wireframe: true,
+        opacity: 0.7,
+        transparent: true
+      });
+      
+      const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+      trunk.position.copy(obj.position);
+      trunk.position.add(obj.direction.clone().multiplyScalar(trunkHeight / 2));
+      trunk.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), obj.direction);
+      trunk.userData.isTreeHelper = true;
+      scene.add(trunk);
+      
+      // Create at least 2 spheres for projectile collision checking
+      // This helps us visualize the continuous collision detection
+      const projRadius = player.weaponSystem.projectileSystem.options.projectileRadius;
+      const height1 = trunkHeight * 0.33;
+      const height2 = trunkHeight * 0.66;
+      
+      // Create spheres at different heights
+      [height1, height2].forEach(height => {
+        const point = obj.position.clone().add(
+          obj.direction.clone().multiplyScalar(height)
+        );
+        
+        const sphereGeo = new THREE.SphereGeometry(projRadius, 12, 8);
+        const sphereMat = new THREE.MeshBasicMaterial({
+          color: 0xffff00,
+          wireframe: true,
+          opacity: 0.3,
+          transparent: true
+        });
+        
+        const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+        sphere.position.copy(point);
+        sphere.userData.isTreeHelper = true;
+        scene.add(sphere);
+      });
+      
+      count++;
+    });
+    
+    return `Created collision visualization for ${count} trees`;
+  };
+  
+  // Add console help
+  console.log(`
+  // *****************************************
+  // ***** TREE COLLISION FIX COMMANDS *****
+  // *****************************************
+  optimizeTreeCollision()     // Apply specialized settings for tree collisions
+  fixTreePenetration()        // Make all tree trunks have more robust collision
+  showTreeCollisions()        // Show the actual collision geometry for trees
+  `);
+
+  // Add a "super tree fix" command that applies maximum tree collision detection
+  window.fixTreeCollisionCompletely = () => {
+    if (!player?.weaponSystem?.projectileSystem) 
+      return "Projectile system not available";
+    
+    const system = player.weaponSystem.projectileSystem;
+    
+    // Apply MAX settings for tree collision
+    system.options.projectileRadius = 2.0;  // Very large radius
+    system.options.bounceFactor = 0.4;      // Medium bounce
+    system.options.minBounceSpeed = 3.0;    // Stop bouncing at moderate speed
+    
+    // Enable debug visualization
+    system.debug = true;
+    
+    // Fix all tree colliders
+    let treeCount = 0;
+    collidables.forEach(obj => {
+      const isTree = obj.mesh?.userData?.isTree || obj.mesh?.userData?.isPineTree;
+      if (isTree) {
+        // CRITICAL: Use much larger virtual trunk radius
+        obj.trunkRadius = Math.max(obj.radius * 0.5, 1.2); // Minimum 1.2 units, very wide
+        
+        // Ensure collision height is properly set
+        obj.collisionHeight = obj.radius * 4; // Make trunks extra tall
+        
+        // Mark tree for special collision handling
+        obj.specialCollisionHandling = true;
+        
+        treeCount++;
+      }
+    });
+    
+    console.log("✅ SUPER TREE COLLISION FIX APPLIED");
+    console.log(`✓ Modified ${treeCount} trees with maximum collision parameters`);
+    console.log("✓ Projectile radius increased to 2.0");
+    console.log("✓ Debug visualization enabled");
+    
+    // Show the visualization
+    showTreeCollisions();
+    
+    return "Super tree collision fix applied successfully!";
+  };
+  
+  // Add the command to the console help
+  console.log(`
+  // *****************************************
+  // ***** ULTIMATE TREE COLLISION FIX *****
+  // *****************************************
+  fixTreeCollisionCompletely()  // Apply maximum tree collision detection
+                               // This should solve the issue for certain!
+  `);
+
+  // Add a refined tree collision fix that makes apples bounce properly off tree trunks
+  window.improveTreeBounce = () => {
+    if (!player?.weaponSystem?.projectileSystem) 
+      return "Projectile system not available";
+    
+    const system = player.weaponSystem.projectileSystem;
+    
+    // Apply bounce-optimized settings
+    system.options.projectileRadius = 1.2;    // Moderate radius (down from 2.0)
+    system.options.bounceFactor = 0.6;        // Higher bounce factor (up from 0.4)
+    system.options.minBounceSpeed = 2.5;      // Lower threshold to allow more bounces
+    
+    // Enable debug visualization
+    system.debug = true;
+    
+    // Fix all tree colliders with better bounce parameters
+    let treeCount = 0;
+    collidables.forEach(obj => {
+      const isTree = obj.mesh?.userData?.isTree || obj.mesh?.userData?.isPineTree;
+      if (isTree) {
+        // Use moderate trunk radius for better visual collision point
+        obj.trunkRadius = Math.max(obj.radius * 0.3, 0.7); // Smaller radius for visual accuracy
+        
+        // Ensure collision height is properly set
+        obj.collisionHeight = obj.radius * 3; // Make trunks tall enough
+        
+        // Set bounce-specific parameters
+        obj.bounceFactor = 0.7; // Higher bounce factor for trees specifically
+        
+        treeCount++;
+      }
+    });
+    
+    console.log("✨ IMPROVED TREE BOUNCE PHYSICS APPLIED");
+    console.log(`✓ Modified ${treeCount} trees with better bounce parameters`);
+    console.log("✓ Projectile radius set to 1.2 for more accurate collisions");
+    console.log("✓ Bounce factor increased to 0.6 for more lively bounces");
+    
+    // Show the visualization
+    showTreeCollisions();
+    
+    return "Tree bounce physics improved!";
+  };
+  
+  // Add the command to the console help
+  console.log(`
+  // *****************************************
+  // ***** IMPROVED TREE BOUNCE PHYSICS *****
+  // *****************************************
+  improveTreeBounce()         // Apply better bounce physics for tree collisions
+                              // Makes apples bounce realistically off tree trunks
+  `);
+}
