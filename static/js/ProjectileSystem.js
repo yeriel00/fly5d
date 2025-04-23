@@ -16,13 +16,13 @@ export default class ProjectileSystem {
       sphereRadius: 400,
       gravity: 0.15,
       projectileRadius: 1.0,
-      projectileSpeed: 40,
+      // SPEED BOOST: Much faster projectile speed
+      projectileSpeed: 65, // Increased from 40 for more snappy feel
       maxProjectiles: 50,
       projectileLifetime: 6000, // milliseconds
-      // IMPROVED: More bouncy collisions
-      bounceFactor: 0.6, // Increased from 0.4 for more lively bounces
-      // IMPROVED: Faster minimum speed before expiring
-      minBounceSpeed: 5.0, // Increased from 2.0
+      // BOUNCE BOOST: More bouncy collisions
+      bounceFactor: 0.75, // Increased from 0.6 for more energetic bounces
+      minBounceSpeed: 5.0,
       getTerrainHeight: getFullTerrainHeight,
       collidables: []
     }, options);
@@ -125,11 +125,15 @@ export default class ProjectileSystem {
     // FIXED: Get direction from options if provided, otherwise use stored direction
     const direction = options.direction || this.slingshotState.direction;
     
-    // Calculate velocity based on power and direction
+    // SPEED BOOST: Apply a velocity multiplier based on power
+    // This makes fully charged shots even faster
+    const powerMultiplier = 1.0 + this.slingshotState.power * 0.5; // Up to 50% faster at full charge
+    
+    // Calculate velocity based on power and direction with the boost
     const velocity = direction.clone()
       .normalize()
       .multiplyScalar(
-        this.options.projectileSpeed * this.slingshotState.power
+        this.options.projectileSpeed * this.slingshotState.power * powerMultiplier
       );
 
     // Create the projectile
@@ -210,14 +214,15 @@ export default class ProjectileSystem {
     projectile.mesh.position.copy(position);
     projectile.velocity.copy(velocity);
     
-    // IMPROVED: Add spin to the projectile for more realistic flight
+    // IMPROVED: Add more dramatic spin to the projectile for more dynamic flight
     projectile.spin = {
       axis: new THREE.Vector3(
         Math.random() - 0.5,
         Math.random() - 0.5, 
         Math.random() - 0.5
       ).normalize(),
-      speed: Math.random() * 2 + 3 // Random spin speed between 3-5 radians/sec
+      // BOOST: Faster spin speed for more visual flair
+      speed: Math.random() * 4 + 6 // Much faster spin (was 2+3)
     };
     
     projectile.active = true;
@@ -270,6 +275,11 @@ export default class ProjectileSystem {
    * @param {number} deltaTime - Time since last frame in seconds
    */
   update(deltaTime) {
+    // Update any active TWEEN animations if available
+    if (typeof TWEEN !== 'undefined') {
+      TWEEN.update();
+    }
+
     const now = Date.now();
     const gravity = this.options.gravity;
     const sphereRadius = this.options.sphereRadius;
@@ -382,6 +392,49 @@ export default class ProjectileSystem {
     // Clean up expired projectiles
     for (const projectile of expiredProjectiles) {
       this.removeProjectile(projectile);
+    }
+
+    // Update bounce effect particles
+    if (this.bounceParticles && this.bounceParticles.length > 0) {
+      const expiredParticles = [];
+      
+      for (const particle of this.bounceParticles) {
+        // Check if particle should be removed
+        const age = now - particle.userData.birthTime;
+        if (age > particle.userData.lifetime) {
+          expiredParticles.push(particle);
+          continue;
+        }
+        
+        // Update position based on velocity
+        particle.position.add(
+          particle.userData.velocity.clone().multiplyScalar(deltaTime)
+        );
+        
+        // Apply gravity
+        const dir = particle.position.clone().normalize();
+        particle.userData.velocity.addScaledVector(
+          dir.clone().negate(), 
+          this.options.gravity * 0.5 * deltaTime * 60
+        );
+        
+        // Fade out
+        const progress = age / particle.userData.lifetime;
+        particle.material.opacity = 0.8 * (1 - progress);
+        
+        // Scale down
+        const scale = 1 - progress * 0.6;
+        particle.scale.set(scale, scale, scale);
+      }
+      
+      // Remove expired particles
+      for (const particle of expiredParticles) {
+        const index = this.bounceParticles.indexOf(particle);
+        if (index !== -1) {
+          this.bounceParticles.splice(index, 1);
+          this.scene.remove(particle);
+        }
+      }
     }
   }
 
@@ -811,7 +864,7 @@ export default class ProjectileSystem {
         
         // Check if we're within collision distance
         if (closestApproach < paddedRadius) {
-          // Calculate how far along the ray the collision occurs
+          // Calculate how far along the ray the collision might occur
           const distanceToClosestPoint = startPos.distanceTo(closestPoint);
           
           // Only use collisions along our actual path (not behind us)
@@ -830,7 +883,7 @@ export default class ProjectileSystem {
       }
     }
     
-    // If we found a collision, handle it
+    // If we found a collision, handle it with enhanced bounce physics
     if (closestCollision) {
       // Move to collision point minus a small safety margin
       const collisionPos = startPos.clone().add(
@@ -838,13 +891,13 @@ export default class ProjectileSystem {
       );
       projectile.mesh.position.copy(collisionPos);
       
-      // IMPROVED BOUNCE PHYSICS FOR TREE TRUNKS
+      // IMPROVED BOUNCE PHYSICS FOR ALL COLLISIONS
       const collisionObj = closestCollision.object;
       const objDir = collisionObj.direction;
       const dir = collisionPos.clone().normalize();
       const dot = dir.dot(objDir);
       
-      // CRITICAL FIX: Much better bounce physics for tree trunks
+      // TURBO-CHARGED BOUNCE: Much better bounce physics with "juice" factor
       let responseDir;
       if (closestCollision.isTrunk) {
         // Get vector from trunk axis to collision point (perpendicular to trunk)
@@ -854,55 +907,80 @@ export default class ProjectileSystem {
           )
         );
         
-        // This is the actual normal vector for the collision - directly away from trunk axis
+        // This is the actual normal vector for the collision
         const trunkNormal = collisionPos.clone().sub(pointOnTrunkAxis).normalize();
         
         // Calculate reflection direction based on incoming vector and normal
-        const incomingDir = moveDir.clone().negate(); // Reverse movement direction
+        const incomingDir = moveDir.clone().negate();
         responseDir = incomingDir.clone().sub(
           trunkNormal.clone().multiplyScalar(2 * incomingDir.dot(trunkNormal))
         ).normalize();
         
-        // Add slight vertical component to bounce realistically
-        responseDir.addScaledVector(objDir, 0.4);
+        // Add slight vertical component for more satisfying bounce
+        responseDir.addScaledVector(objDir, 0.3); // Reduced from 0.4 for flatter bounces
         responseDir.normalize();
         
-        // Log trunk collision for debugging
-        console.log("TREE TRUNK BOUNCE: Using proper reflection physics");
+        // SNAPPY: Give the response direction a bit of "snap" with impulse
+        const snapFactor = 1.25; // 25% extra "snap" when bouncing
+        responseDir.multiplyScalar(snapFactor);
       } else {
-        // Standard bounce direction for other objects
+        // Standard bounce direction for other objects, but with "snap"
         responseDir = dir.clone().sub(
           objDir.clone().multiplyScalar(dot)
-        ).normalize();
+        ).normalize().multiplyScalar(1.2); // 20% extra "snap"
       }
       
-      // Get current speed and reduce it for energy loss in bounce
+      // TURBO: Get current speed and apply bouncier physics
       const currentSpeed = projectile.velocity.length();
       
-      // IMPROVED: More realistic bounce physics with better energy conservation
-      // Use 40% of original speed for trunk collisions (up from 20%)
-      const speed = currentSpeed * (closestCollision.isTrunk ? 0.4 : 0.35);
+      // JUICY: Much higher energy conservation in bounces
+      // Use 55% of original speed for trunk collisions (up from 40%)
+      // And 45% for other objects (up from 35%)
+      const speed = currentSpeed * (closestCollision.isTrunk ? 0.55 : 0.45);
       
       // Apply the new velocity with proper direction and speed
       projectile.velocity = responseDir.multiplyScalar(speed);
       
-      // Add slight random bounce variation (reduced for more predictable physics)
+      // DYNAMIC: Scale random bounce variation based on impact speed
+      // Faster impacts get more variation for dynamic feel
+      const randomFactor = Math.min(0.2, 0.1 + (currentSpeed / 200)); // Cap at 0.2
+      
+      // Add slight random bounce variation (proportional to impact speed)
       const randomBounce = new THREE.Vector3(
-        (Math.random() - 0.5) * 0.15,  // Reduced from 0.2
-        (Math.random() - 0.5) * 0.15,  // Reduced from 0.2
-        (Math.random() - 0.5) * 0.15   // Reduced from 0.2
-      ).multiplyScalar(closestCollision.isTrunk ? 0.2 : 0.1);  // Reduced multiplier
+        (Math.random() - 0.5) * randomFactor,
+        (Math.random() - 0.5) * randomFactor,
+        (Math.random() - 0.5) * randomFactor
+      ).multiplyScalar(closestCollision.isTrunk ? 0.25 : 0.15);
       
       projectile.velocity.add(randomBounce);
       
-      // CRITICAL FIX: Don't remove projectile immediately if speed is low
-      // Instead, give it time for the bounce animation to play out
-      if (projectile.velocity.length() < this.options.minBounceSpeed * 0.3) {
+      // Only remove slowest projectiles
+      if (projectile.velocity.length() < this.options.minBounceSpeed * 0.2) {
         // Mark for removal but with a delay to show the bounce first
         if (!projectile.removeTime) {
-          projectile.removeTime = Date.now() + 800; // Remove after 800ms
+          projectile.removeTime = Date.now() + 500; // Remove after 500ms (down from 800ms)
         }
       }
+      
+      // VISUAL FEEDBACK: Add "impact squash" for a frame to enhance bounce feel
+      // Temporarily scale the projectile on impact for visual feedback
+      const originalScale = projectile.mesh.scale.clone();
+      // Impact direction determines the squash axis
+      const impactAxis = projectile.velocity.clone().normalize();
+      // Squash along impact direction, stretch perpendicular
+      const squashAmount = Math.min(0.7, 0.4 + (currentSpeed / 120)); // More squash for faster impacts
+      projectile.mesh.scale.set(1 + squashAmount, 1 - squashAmount, 1 + squashAmount);
+      
+      // Restore original scale after a short delay
+      setTimeout(() => {
+        if (projectile.mesh && projectile.mesh.parent) {
+          // Smoothly restore scale
+          new TWEEN.Tween(projectile.mesh.scale)
+            .to({x: originalScale.x, y: originalScale.y, z: originalScale.z}, 150)
+            .easing(TWEEN.Easing.Elastic.Out)
+            .start();
+        }
+      }, 50);
       
       // Invoke callback if set
       if (projectile.onCollideCallback) {
@@ -929,10 +1007,56 @@ export default class ProjectileSystem {
           this.scene.remove(marker);
         }, 2000);
       }
+
+      // BOUNCE BOOST: Create a visual bounce effect
+      this._createBounceEffect(collisionPos, speed);
       
       return closestCollision;
     }
     
     return null; // No collision
+  }
+
+  /**
+   * Add new method to create a visual bounce effect
+   */
+  _createBounceEffect(position, speed) {
+    if (!this.debug) return;
+    
+    // Create a burst of particles at collision point
+    const particleCount = Math.min(Math.floor(speed * 0.5), 8);
+    
+    for (let i = 0; i < particleCount; i++) {
+      // Create small sphere for particle
+      const size = 0.1 + Math.random() * 0.15;
+      const geometry = new THREE.SphereGeometry(size, 4, 4);
+      const material = new THREE.MeshBasicMaterial({
+        color: 0xffaa00,
+        transparent: true,
+        opacity: 0.8
+      });
+      
+      const particle = new THREE.Mesh(geometry, material);
+      particle.position.copy(position);
+      
+      // Add random velocity
+      const velocity = new THREE.Vector3(
+        (Math.random() - 0.5) * 2,
+        (Math.random() - 0.5) * 2,
+        (Math.random() - 0.5) * 2
+      ).normalize().multiplyScalar(speed * 0.3);
+      
+      // Store velocity with the particle
+      particle.userData.velocity = velocity;
+      particle.userData.birthTime = Date.now();
+      particle.userData.lifetime = 300 + Math.random() * 300; // 300-600ms
+      
+      // Add to scene
+      this.scene.add(particle);
+      
+      // Track the particle for animation
+      if (!this.bounceParticles) this.bounceParticles = [];
+      this.bounceParticles.push(particle);
+    }
   }
 }

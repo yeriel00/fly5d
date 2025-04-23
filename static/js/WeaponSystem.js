@@ -18,8 +18,8 @@ export default class WeaponSystem {
       launchOffset: new THREE.Vector3(0, -1.0, -2.0), // Lower and further out in front
       sphereRadius: 400,
       gravity: 0.15,
-      // IMPROVED: Much higher projectile speed for bow/slingshot feel
-      projectileSpeed: 80, // Doubled from 40 to 80 for a much faster initial velocity
+      // TURBO BOOST: Dramatically faster projectile speed for snappy feel
+      projectileSpeed: 130, // Increased from 80 to 130 for ultra-fast initial velocity
       projectileRadius: 1.0,
       collidables: []
     }, options);
@@ -27,12 +27,14 @@ export default class WeaponSystem {
     // Create projectile system with enhanced physics
     this.projectileSystem = new ProjectileSystem(scene, {
       sphereRadius: this.options.sphereRadius,
-      // IMPROVED: Higher gravity for more dramatic arcs
-      gravity: this.options.gravity * 2.5, // 2.5x higher gravity for faster drops
+      // JUICY PHYSICS: Higher gravity for more dramatic arcs but less than before
+      gravity: this.options.gravity * 1.8, // Reduced from 2.5x to 1.8x for better arc
       projectileRadius: this.options.projectileRadius,
       projectileSpeed: this.options.projectileSpeed,
-      // IMPROVED: Shorter lifetime for projectiles that go too far
-      projectileLifetime: 8000, // 8 seconds max lifetime
+      // SNAPPY: Make projectiles disappear faster when they go too far
+      projectileLifetime: 6000, // 6 seconds (down from 8) for quicker cleanup
+      // BOUNCY: Much higher bounce factor for satisfying physics
+      bounceFactor: 0.75, // Increased from default 0.6 for extra bounce
       getTerrainHeight: this.options.getTerrainHeight,
       collidables: this.options.collidables
     });
@@ -342,5 +344,52 @@ export default class WeaponSystem {
       ammo: { ...this.ammo },
       chargeState: this.isCharging ? this.projectileSystem.getSlingshotState() : null
     };
+  }
+  
+  // Update charge logic to make charging faster and more responsive
+  updateCharge(deltaTime) {
+    if (!this.charging) return;
+
+    // IMPROVED: Faster charging for a snappier feel
+    const chargeSpeed = 1.8; // Increased from default values for faster charge
+    
+    // Update charge value
+    this.charge = Math.min(1.0, this.charge + (chargeSpeed * deltaTime));
+    
+    // Visual feedback (possibly shake camera slightly at full charge)
+    if (this.charge >= 0.98 && !this._fullChargeEffectApplied) {
+      // Apply subtle camera shake at full charge
+      if (this.camera && typeof this.camera.shake === 'function') {
+        this.camera.shake(0.2, 0.1);
+      }
+      this._fullChargeEffectApplied = true;
+    }
+    
+    // Return current state
+    return {
+      charging: true,
+      charge: this.charge
+    };
+  }
+
+  // Modify fire method to add screen shake on powerful shots
+  fire(position, direction, type = 'apple') {
+    // Get reference to projectile system
+    const projectileSystem = this.projectileSystem;
+    if (!projectileSystem) return null;
+    
+    // Create projectile
+    const result = projectileSystem.release(position, {
+      direction,
+      type
+    });
+    
+    // Add screen shake based on power
+    if (result && result.power > 0.7 && this.camera && typeof this.camera.shake === 'function') {
+      const shakeAmount = result.power * 0.3; // Proportional to shot power
+      this.camera.shake(shakeAmount, 0.2);
+    }
+    
+    // ... rest of method ...
   }
 }
