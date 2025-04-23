@@ -382,8 +382,8 @@ function enhanceEnvironment() {
 // *** PHYSICS MASTER CONTROLS ***
 // Add global physics controls that can be adjusted
 const physics = {
-  gravity: 0.15,         // Default gravity value (higher = stronger pull)
-  jumpStrength: 1,     // Default jump strength
+  gravity: 0.2,          // Maintained strong gravity (increased from 0.15)
+  jumpStrength: 4.5,     // Significantly increased jump strength (from 1.0)
   maxJumps: 2,            // Number of jumps allowed (2 = double jump)
   
   // Method to update the controls when these values change
@@ -439,7 +439,7 @@ const playerConfig = {
   startPosition: new THREE.Vector3(0, 1, 0).normalize(), // Position at north pole
   startElevation: 3,
   eyeHeight: 12, 
-  moveSpeed: 2.0,
+  moveSpeed: 18.0,    // INCREASED from 16.0 to 18.0 for faster movement
   lookSpeed: 0.002,
   playerRadius: 6.0, // Collision radius remains the same
   debugMode: false, // Set to true to see player collision body
@@ -549,28 +549,88 @@ function setupDebugCommands() {
   // Quick preset configurations
   window.presets = {
     moonGravity() {
-      physics.setGravity(0.04);
-      physics.setJumpStrength(1.0);
-      physics.setMaxJumps(3); // More jumps on the moon!
-      console.log("Moon gravity preset applied: low gravity, high jumps, triple jump!");
+      physics.setGravity(0.08);       // Slightly increased moon gravity
+      physics.setJumpStrength(5.0);   // Very strong moon jumps
+      physics.setMaxJumps(3); 
+      console.log("Moon gravity preset: lower gravity, very high jumps, triple jump!");
+      
+      // Adjust speed parameters for moon preset
+      if (window.movePhysics) {
+        movePhysics.airControl = 0.35; 
+        movePhysics.groundSpeed = 35.0;
+        movePhysics.apply();
+      }
     },
     
     earthGravity() {
-      physics.setGravity(0.15);
-      physics.setJumpStrength(0.5);
-      physics.setMaxJumps(2); // Standard double-jump
-      console.log("Earth gravity preset applied: default settings with double-jump");
+      physics.setGravity(0.2);        // Maintained current earth gravity
+      physics.setJumpStrength(4.5);   // Strong jump force to overcome gravity
+      physics.setMaxJumps(2); 
+      console.log("Earth gravity preset: normal gravity, high jumps, double-jump!");
+      
+      // Reset speed parameters for earth preset
+      if (window.movePhysics) {
+        movePhysics.airControl = 0.3;
+        movePhysics.groundSpeed = 32.0;
+        movePhysics.apply();
+      }
     },
     
     jupiterGravity() {
-      physics.setGravity(0.4);
-      physics.setJumpStrength(0.25);
-      physics.setMaxJumps(1); // Only one jump on Jupiter - it's too heavy!
-      console.log("Jupiter gravity preset applied: high gravity, small jumps, no double-jump");
+      physics.setGravity(0.45);       // Kept high jupiter gravity
+      physics.setJumpStrength(7.0);   // VERY strong jumps to counteract high gravity
+      physics.setMaxJumps(1);
+      console.log("Jupiter gravity preset applied: high gravity, powerful jumps, no double-jump");
+      
+      // Adjust speed parameters for jupiter
+      if (window.movePhysics) {
+        movePhysics.airControl = 0.25;
+        movePhysics.groundSpeed = 40.0;
+        movePhysics.apply();
+      }
+    },
+    
+    // Super jump preset with even higher values
+    superJump() {
+      physics.setGravity(0.25);       // Moderate-high gravity
+      physics.setJumpStrength(9.0);   // Extremely high jumps
+      physics.setMaxJumps(3);
+      console.log("SUPER JUMP preset: high gravity but MEGA-high jumps with triple-jump!");
+      
+      // Higher air control for super jumps
+      if (window.movePhysics) {
+        movePhysics.airControl = 0.4;
+        movePhysics.groundSpeed = 35.0;
+        movePhysics.apply();
+      }
+    },
+    
+    // Add specific debug command to test jumping
+    testJump() {
+      // Force player to jump with high force
+      if (player && player.controls) {
+        // Override jump parameters temporarily
+        const oldJumpStrength = player.controls.jumpStrength;
+        player.controls.jumpStrength = 6.0;
+        
+        // Make the jump from current position
+        const upDir = player.playerObject.position.clone().normalize();
+        player.controls.velocity = upDir.clone().multiplyScalar(player.controls.jumpStrength * 4.5);
+        player.controls.isJumping = true;
+        player.controls.onGround = false;
+        
+        // Restore original jump strength
+        setTimeout(() => {
+          player.controls.jumpStrength = oldJumpStrength;
+          console.log("Jump strength restored to:", oldJumpStrength);
+        }, 1000);
+        
+        console.log("TEST JUMP applied with force:", player.controls.jumpStrength * 4.5);
+      }
     }
   };
   
-  console.log("Physics presets: presets.moonGravity(), presets.earthGravity(), presets.jupiterGravity()");
+  console.log("Physics presets: presets.moonGravity(), presets.earthGravity(), presets.jupiterGravity(), presets.superJump()");
   
   // Add trunk height control commands
   window.setTreeTrunkHeight = (min, max) => {
@@ -710,6 +770,305 @@ function setupDebugCommands() {
   };
   
   console.log("Foliage controls: setFoliageScale(scale), setFoliageVariation(min, max)");
+
+  // Improved movement physics controls
+  window.movePhysics = {
+    // Core movement parameters 
+    airControl: 0.3,       // Increased from 0.22
+    groundSpeed: 32.0,     // Increased from 18.0
+    jumpHeight: 1.0,
+    jumpInfluence: 0.35,   // Increased from 0.25
+    
+    // Apply settings to the player
+    apply() {
+      if (!player || !player.controls) {
+        console.warn("Player not initialized yet");
+        return false;
+      }
+      
+      // Update control parameters with appropriate scaling
+      player.controls.airControlFactor = this.airControl;
+      player.controls.moveSpeed = this.groundSpeed;
+      player.controls.jumpDirectionMix = this.jumpInfluence;
+      
+      // IMPORTANT: Update maximum speeds to match movement speed
+      player.controls.maxGroundSpeed = this.groundSpeed * 1.25; // 25% higher than move speed
+      player.controls.maxAirSpeed = this.groundSpeed * 1.4;     // 40% higher in air
+      
+      // Set jump height
+      player.controls.jumpStrength = physics.jumpStrength * this.jumpHeight;
+      
+      console.log(`✓ Movement settings applied! Speed: ${this.groundSpeed}, Air Control: ${this.airControl}`);
+      return true;
+    },
+    
+    // Bigger speed boost - 50% faster
+    speedBoost() {
+      this.groundSpeed *= 1.5; // Increased from 1.2 (20%) to 1.5 (50%)
+      this.apply();
+      console.log(`💨 Speed boost applied! Ground speed: ${this.groundSpeed.toFixed(1)}`);
+    },
+    
+    // Even faster speed mode
+    superSpeed() {
+      this.groundSpeed = 75.0;
+      this.apply();
+      console.log(`🚀 SUPER SPEED activated! Ground speed: ${this.groundSpeed.toFixed(1)}`);
+    },
+    
+    // Reset to balanced defaults
+    reset() {
+      this.airControl = 0.3;
+      this.groundSpeed = 32.0;
+      this.jumpHeight = 1.0;
+      this.jumpInfluence = 0.35;
+      this.apply();
+      console.log("Movement settings reset to improved balanced defaults");
+    }
+  };
+
+  // Simplified movement physics controls - uses the balanced preset with speed boost
+  window.movePhysics = {
+    // Core movement parameters
+    airControl: 0.22,       // Good air control (0.1-0.5)
+    groundSpeed: 18.0,      // Faster ground movement (higher = faster)
+    jumpHeight: 1.0,        // Jump height multiplier
+    jumpInfluence: 0.25,    // How much direction affects jumps (0-1)
+    
+    // Apply settings to the player
+    apply() {
+      if (!player || !player.controls) {
+        console.warn("Player not initialized yet");
+        return false;
+      }
+      
+      // Update control parameters
+      player.controls.airControlFactor = this.airControl;
+      player.controls.moveSpeed = this.groundSpeed;
+      player.controls.jumpDirectionMix = this.jumpInfluence;
+      
+      // Set jump height
+      player.controls.jumpStrength = physics.jumpStrength * this.jumpHeight;
+      
+      console.log("✓ Movement settings applied!");
+      return true;
+    },
+    
+    // Speed boost - make movement 20% faster
+    speedBoost() {
+      this.groundSpeed *= 1.2;
+      this.apply();
+      console.log("Speed boost applied! Ground speed: " + this.groundSpeed.toFixed(1));
+    },
+    
+    // Reset to balanced defaults
+    reset() {
+      this.airControl = 0.22;
+      this.groundSpeed = 18.0; 
+      this.jumpHeight = 1.0;
+      this.jumpInfluence = 0.25;
+      this.apply();
+      console.log("Movement settings reset to balanced defaults");
+    }
+  };
+
+  // Add a jump debugging function to help diagnose what's happening
+  window.debugJump = () => {
+    if (!player || !player.controls) {
+      return console.log("Player not initialized");
+    }
+    
+    const controls = player.controls;
+    console.log({
+      // Current state
+      onGround: controls.onGround,
+      isJumping: controls.isJumping,
+      jumpsRemaining: controls.jumpsRemaining,
+      maxJumps: controls.maxJumps,
+      
+      // Jump parameters
+      jumpStrength: controls.jumpStrength,
+      jumpForceMultiplier: 5.5, // The multiplier used in onKeyDown
+      effectiveJumpForce: controls.jumpStrength * 5.5,
+      
+      // Last jump details
+      lastJumpForce: controls._lastJumpForce,
+      lastJumpVelocity: controls._lastJumpVelocity,
+      
+      // Current velocity
+      velocity: controls.velocity.clone(),
+      speed: controls.velocity.length(),
+      verticalComponent: controls.velocity.dot(player.playerObject.position.clone().normalize()),
+      
+      // Physics state
+      gravity: controls.gravity,
+      airTime: controls.airTime,
+      gravityMultiplier: Math.min(
+        controls.maxGravityMultiplier,
+        1.0 + (controls.airTime / controls.gravityRampTime) * (controls.maxGravityMultiplier - 1.0)
+      )
+    });
+  };
+  
+  // Enhance the testJump function to be more useful
+  presets.testJump = function() {
+    if (!player || !player.controls) {
+      return console.log("Player not initialized");
+    }
+    
+    const controls = player.controls;
+    const upDir = player.playerObject.position.clone().normalize();
+    
+    // Reset state for a clean test
+    controls.jumpsRemaining = controls.maxJumps;
+    controls.onGround = true;
+    controls.isJumping = false;
+    controls.airTime = 0;
+    controls.jumpCooldown = 0;
+    
+    // Apply a strong test jump with 7x multiplier
+    const jumpForce = controls.jumpStrength * 7.0;
+    controls.velocity = upDir.clone().multiplyScalar(jumpForce);
+    
+    // Set jump state
+    controls.onGround = false;
+    controls.isJumping = true;
+    controls.jumpsRemaining--;
+    controls.jumpAirTime = 0;
+    
+    console.log(`TEST JUMP applied with force: ${jumpForce.toFixed(2)}, velocity: ${controls.velocity.length().toFixed(2)}`);
+  };
+  
+  // Add console help for jump debugging
+  console.log(
+  `
+  // *****************************************
+  // ***** JUMP DEBUGGING TOOLS *****
+  // *****************************************
+  // Run these commands to diagnose jump issues:
+  
+  // Show detailed jump & physics state:
+  debugJump()
+  
+  // Force a test jump with very high force:
+  presets.testJump()
+  
+  // Apply super jump preset (high jumps):
+  presets.superJump()
+  
+  // Force jump with current settings:
+  makeJump()
+  `);
+
+  // Add a special jump fix preset that restores jumps properly
+  window.resetJumps = () => {
+    if (player && player.controls) {
+      player.controls.jumpsRemaining = player.controls.maxJumps;
+      console.log(`✓ Jumps reset to maximum: ${player.controls.maxJumps}`);
+      return player.controls.jumpsRemaining;
+    }
+    return "Player not available";
+  };
+
+  // Force player to the ground to reset jump state
+  window.forceGroundContact = () => {
+    if (player && player.controls) {
+      const controls = player.controls;
+      controls.onGround = true;
+      controls.isJumping = false;
+      controls.jumpAirTime = 0;
+      controls.jumpsRemaining = controls.maxJumps;
+      console.log("✓ Ground contact forced");
+      return true;
+    }
+    return "Player not available";
+  };
+
+  // Update console help message to include jump fixes
+  console.log(
+  `
+  // *****************************************
+  // ***** JUMP FIX COMMANDS *****
+  // *****************************************
+  // Run these if you have jump problems:
+
+  resetJumps()            // Restore all jumps
+  forceGroundContact()    // Force ground contact state
+  `);
+
+  // Add a quick function to debug key events
+  window.debugKeys = () => {
+    // Set up key event logging
+    const oldKeyDown = document.onkeydown;
+    const oldKeyUp = document.onkeyup;
+    
+    document.onkeydown = (e) => {
+      console.log(`Key Down: "${e.key}" (code: ${e.keyCode})`);
+      if (oldKeyDown) oldKeyDown(e);
+    };
+    
+    document.onkeyup = (e) => {
+      console.log(`Key Up: "${e.key}" (code: ${e.keyCode})`);
+      if (oldKeyUp) oldKeyUp(e);
+    };
+    
+    console.log("Key event debugging enabled - press keys to see events");
+    
+    // After 30 seconds, restore original handlers
+    setTimeout(() => {
+      document.onkeydown = oldKeyDown;
+      document.onkeyup = oldKeyUp;
+      console.log("Key event debugging disabled");
+    }, 30000);
+  };
+
+  // Add this to the init code to ensure key handlers work properly
+  window.addEventListener('blur', () => {
+    // Reset all pressed keys when window loses focus
+    if (player && player.controls) {
+      console.log("Window blur - resetting all key states");
+      player.controls.keys = {};
+      
+      // Also reset jump cooldown
+      player.controls.jumpCooldown = 0;
+    }
+  });
+
+  // Add an emergency jump fix function
+  window.fixJump = () => {
+    if (!player || !player.controls) return "Player not available";
+    
+    const controls = player.controls;
+    
+    // Reset all jump-related state
+    controls.jumpsRemaining = controls.maxJumps;
+    controls.jumpCooldown = 0;
+    controls.isJumping = false;
+    controls.airTime = 0;
+    controls.jumpAirTime = 0;
+    
+    // Clear the space key state in case it's stuck
+    controls.keys[' '] = false;
+    controls.keys['spacebar'] = false;
+    
+    console.log("✅ Jump system completely reset!");
+    return {
+      jumpsRemaining: controls.jumpsRemaining,
+      jumpCooldown: 0,
+      maxJumps: controls.maxJumps
+    };
+  };
+
+  // Add to console help messages
+  console.log(`
+  // *****************************************
+  // ***** JUMP FIX EMERGENCY COMMANDS *****
+  // *****************************************
+  // Run these if jumps are completely broken:
+
+  fixJump()              // Reset ALL jump state
+  debugKeys()            // Monitor key events (30 seconds)
+  `);
 }
 
 // Call at startup
