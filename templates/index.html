@@ -5,7 +5,24 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>5D Sphere World Explorer</title>
   <link rel="stylesheet" href="/static/css/main.css">
-  <style>body{margin:0;overflow:hidden;}canvas{display:block;}</style>
+  <style>
+    body { margin:0; overflow:hidden; }
+    canvas { display:block; }
+    /* IMPROVED power meter styling for better visibility */
+    #power-meter {
+      height: 15px !important; /* Increased height even more */
+      background: rgba(0, 0, 0, 0.7) !important; /* Darker background */
+      border: 2px solid rgba(255, 255, 255, 0.5) !important; /* More visible border */
+      box-shadow: 0 0 10px rgba(255, 255, 255, 0.3) !important; /* Add glow */
+    }
+    
+    #power-fill {
+      background: linear-gradient(to right, #ffcc00, #ff6600, #ff0000) !important; /* Gradient fill */
+      transition: width 0.01s !important; /* Even faster updates */
+      height: 100% !important;
+      border-radius: 3px !important;
+    }
+  </style>
 </head>
 <body>
   <canvas id="c"></canvas>
@@ -18,7 +35,8 @@
     {
       "imports": {
         "three": "https://unpkg.com/three@0.152.2/build/three.module.js",
-        "three/addons/": "https://unpkg.com/three@0.152.2/examples/jsm/"
+        "three/addons/": "https://unpkg.com/three@0.152.2/examples/jsm/",
+        "tween": "/static/js/libs/tween.esm.js"
       }
     }
   </script>
