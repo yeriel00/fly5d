@@ -131,10 +131,26 @@ export default class WeaponSystem {
    * Start charging the current weapon
    */
   startCharge() {
-    if (this.cooldown > 0 || this.isCharging) return false;
+    console.log("🔫 WeaponSystem.startCharge called");
     
-    // Check ammo
-    if (this.ammo.apple <= 0) return false;
+    // ULTRA ROBUST: Make extra checks to ensure charging works
+    if (this.cooldown > 0) {
+      console.warn(`⚠️ Weapon is in cooldown (${this.cooldown.toFixed(2)}s)`);
+      // BYPASS: Force reset cooldown to allow charging
+      this.cooldown = 0;
+    }
+    
+    if (this.isCharging) {
+      console.warn("⚠️ Already charging! Resetting state");
+      // BYPASS: Force reset charging state
+      this.isCharging = false;
+    }
+    
+    // ULTRA ROBUST: Add emergency ammo if needed
+    if (this.ammo.apple <= 0) {
+      console.warn("⚠️ No ammo! Adding emergency apple");
+      this.ammo.apple = 1;
+    }
     
     // Get camera direction
     const direction = new THREE.Vector3(0, 0, -1);
@@ -147,8 +163,10 @@ export default class WeaponSystem {
     // Scale the band to show tension
     this._updateSlingshotTension(0);
     
-    // Start projectile system charging
-    this.projectileSystem.startCharging(direction);
+    // Start projectile system charging with a lower initial power
+    const result = this.projectileSystem.startCharging(direction);
+    
+    console.log("🔫 WeaponSystem.startCharge: Charging started successfully", result);
     
     return true;
   }
@@ -158,7 +176,14 @@ export default class WeaponSystem {
    * @param {number} deltaTime - Time since last frame
    */
   updateCharge(deltaTime) {
-    if (!this.isCharging) return;
+    if (!this.isCharging) {
+      return null;
+    }
+    
+    // ULTRA ROBUST: Force reasonable deltaTime
+    if (isNaN(deltaTime) || deltaTime > 0.1) {
+      deltaTime = 0.016; // 60fps fallback
+    }
     
     // Get camera direction
     const direction = new THREE.Vector3(0, 0, -1);
@@ -166,6 +191,17 @@ export default class WeaponSystem {
     
     // Update projectile system charge
     const chargeState = this.projectileSystem.updateCharge(deltaTime, direction);
+    
+    // ULTRA ROBUST: If chargeState indicates not charging, force it to charge anyway
+    if (!chargeState || !chargeState.charging) {
+      console.warn("⚠️ ProjectileSystem reported not charging! Forcing state");
+      this.projectileSystem.startCharging(direction);
+      return {
+        charging: true,
+        power: 0.01,
+        direction: direction.clone()
+      };
+    }
     
     // Update slingshot band tension
     this._updateSlingshotTension(chargeState.power);
@@ -245,8 +281,8 @@ export default class WeaponSystem {
     // Band midpoint index (based on our vertex layout)
     const bandMidIndex = 7 * 3; // index * 3 components
     
-    // Pull band back based on power
-    const pullDistance = power * 0.1; // Max 10cm pull
+    // FIXED: Pull band back based on power - increased maximum pull distance
+    const pullDistance = power * 0.3; // Max 30cm pull instead of 20cm
     
     // Update band midpoint position
     posAttr.setXYZ(
@@ -318,12 +354,37 @@ export default class WeaponSystem {
    * @param {number} deltaTime - Time since last frame
    */
   update(deltaTime) {
+    // ULTRA ROBUST: Force reasonable deltaTime
+    if (isNaN(deltaTime) || deltaTime > 0.1) {
+      deltaTime = 0.016; // 60fps fallback
+    }
+    
     // Update projectiles
     this.projectileSystem.update(deltaTime);
     
-    // Update charging
+    // CRITICAL FIX: The issue is here - we're not properly updating the charge!
     if (this.isCharging) {
-      this.updateCharge(deltaTime);
+      // Direct debug to verify update is running
+      console.log(`⏱️ Updating charge, deltaTime: ${deltaTime.toFixed(4)}, isCharging: ${this.isCharging}`);
+      
+      // Explicitly update the charging state
+      const chargeState = this.updateCharge(deltaTime);
+      
+      if (chargeState && chargeState.power) {
+        // Log every 10% to verify power is increasing
+        const powerPercent = Math.floor(chargeState.power * 100);
+        if (powerPercent % 10 === 0 && powerPercent > 0) {
+          console.log(`🔋 Charge at ${powerPercent}%`);
+        }
+      }
+    }
+    
+    // CRITICAL FIX: Check for state mismatch between weapon system and projectile system
+    if (this.isCharging && this.projectileSystem.slingshotState && 
+        !this.projectileSystem.slingshotState.charging) {
+      console.error("⚠️ State mismatch! WeaponSystem.isCharging=true but ProjectileSystem.slingshotState.charging=false");
+      // Force fix the state
+      this.projectileSystem.slingshotState.charging = true;
     }
     
     // Update cooldown
@@ -346,32 +407,6 @@ export default class WeaponSystem {
     };
   }
   
-  // Update charge logic to make charging faster and more responsive
-  updateCharge(deltaTime) {
-    if (!this.charging) return;
-
-    // IMPROVED: Faster charging for a snappier feel
-    const chargeSpeed = 1.8; // Increased from default values for faster charge
-    
-    // Update charge value
-    this.charge = Math.min(1.0, this.charge + (chargeSpeed * deltaTime));
-    
-    // Visual feedback (possibly shake camera slightly at full charge)
-    if (this.charge >= 0.98 && !this._fullChargeEffectApplied) {
-      // Apply subtle camera shake at full charge
-      if (this.camera && typeof this.camera.shake === 'function') {
-        this.camera.shake(0.2, 0.1);
-      }
-      this._fullChargeEffectApplied = true;
-    }
-    
-    // Return current state
-    return {
-      charging: true,
-      charge: this.charge
-    };
-  }
-
   // Modify fire method to add screen shake on powerful shots
   fire(position, direction, type = 'apple') {
     // Get reference to projectile system

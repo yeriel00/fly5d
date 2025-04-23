@@ -12,6 +12,8 @@ import LowPolyGenerator from './low_poly_generator.js';
 import Player from './player.js';
 // Fix the TWEEN import path to use a relative path
 import TWEEN from './libs/tween.esm.js';
+// Add this near the beginning of the file with other imports
+import directInput from './direct-input.js';
 
 // --- Constants ---
 const R = 400; // INCREASED radius from 300 to 400 for more spacious feel
@@ -504,12 +506,32 @@ onWindowResize();
 function animate() {
   const delta = clock.getDelta();
   
+  // FIXED: Log animation frame occasionally for debug
+  const now = Date.now();
+  if (now % 1000 < 20) { // Log approximately once per second
+    console.log(`🔄 Animation frame, delta: ${delta.toFixed(4)}`);
+  }
+  
   // Update TWEEN animations
   TWEEN.update();
   
   // Update player
   if (player) {
     player.update(delta);
+    
+    // FIXED: Add explicit check for charging state
+    const weaponState = player.getWeaponState();
+    if (weaponState && weaponState.isCharging) {
+      const powerMeter = document.getElementById('power-meter');
+      const powerFill = document.getElementById('power-fill');
+      
+      if (powerMeter && powerFill && weaponState.chargeState) {
+        // Force power meter to be visible during charging
+        powerMeter.style.display = 'block';
+        const powerPercentage = Math.min(100, weaponState.chargeState.power * 100);
+        powerFill.style.width = `${powerPercentage}%`;
+      }
+    }
   }
   
   // Render scene with player camera
@@ -517,6 +539,7 @@ function animate() {
     renderer.render(scene, player.getCamera());
   }
   
+  // Always continue the animation loop
   requestAnimationFrame(animate);
 }
 
@@ -1088,29 +1111,33 @@ function setupDebugCommands() {
 setupDebugCommands();
 
 // Add event listeners for weapon actions
+// Replace setupWeaponControls function with this much simpler version
 function setupWeaponControls() {
-  // Mouse controls for slingshot
-  document.addEventListener('mousedown', (e) => {
-    if (e.button === 0 && player) { // Left mouse button
-      player.fireWeapon();
-      
-      // Show feedback in debug console
-      const weaponState = player.getWeaponState();
-      console.log(`Charging ${weaponState.currentWeapon}...`);
+  console.log("⚔️ Setting up weapon controls with DirectInputHandler");
+  
+  // Connect the direct input handler to our weapon system
+  directInput.onLeftDown(() => {
+    console.log("🏹 Starting weapon charge");
+    if (player) {
+      const result = player.fireWeapon();
+      console.log("Weapon charge started:", result);
     }
   });
   
-  document.addEventListener('mouseup', (e) => {
-    if (e.button === 0 && player) { // Left mouse button
+  directInput.onLeftUp((data) => {
+    console.log(`🔥 Releasing weapon after ${data.holdTime}ms`);
+    if (player) {
       const result = player.releaseWeapon();
-      
+      console.log("Weapon fired:", result ? "Success" : "Failed");
       if (result && result.projectile) {
         console.log(`Fired ${result.projectile.type} with power ${result.power.toFixed(2)}`);
+      } else {
+        console.log("No projectile was created on release");
       }
     }
   });
   
-  // Weapon switching
+  // Add weapon switching with Q key
   document.addEventListener('keydown', (e) => {
     if (e.key === 'q' && player) {
       const oldState = player.getWeaponState();
@@ -1121,7 +1148,69 @@ function setupWeaponControls() {
         console.log(`Switched from ${oldState.currentWeapon} to ${newState.currentWeapon}`);
       }
     }
+    
+    // Space as backup fire button
+    if (e.key === ' ' && player) {
+      console.log("SPACE pressed - Starting backup charge");
+      player.fireWeapon();
+    }
   });
+  
+  document.addEventListener('keyup', (e) => {
+    // Space as backup release
+    if (e.key === ' ' && player) {
+      console.log("SPACE released - Releasing backup charge");
+      player.releaseWeapon();
+    }
+  });
+  
+  // Add a container to show charge level on screen at all times
+  const chargeDebug = document.createElement('div');
+  chargeDebug.id = 'charge-debug';
+  chargeDebug.style.position = 'fixed';
+  chargeDebug.style.bottom = '60px'; 
+  chargeDebug.style.left = '50%';
+  chargeDebug.style.transform = 'translateX(-50%)';
+  chargeDebug.style.background = 'rgba(0,0,0,0.7)';
+  chargeDebug.style.color = 'white';
+  chargeDebug.style.padding = '5px 10px';
+  chargeDebug.style.borderRadius = '3px';
+  chargeDebug.style.fontFamily = 'monospace';
+  chargeDebug.style.fontSize = '14px';
+  chargeDebug.textContent = 'CLICK & HOLD to charge';
+  document.body.appendChild(chargeDebug);
+  
+  // Function to continuously update debug info
+  function updateChargeDebug() {
+    if (!player || !player.weaponSystem || !player.weaponSystem.projectileSystem) {
+      chargeDebug.textContent = 'Weapon system not ready';
+      requestAnimationFrame(updateChargeDebug);
+      return;
+    }
+    
+    const state = player.weaponSystem.projectileSystem.slingshotState;
+    
+    if (state && state.charging) {
+      const power = Math.floor(state.power * 100);
+      chargeDebug.textContent = `CHARGING: ${power}% (${state.chargeSpeed.toFixed(1)}x)`;
+      chargeDebug.style.color = power > 90 ? '#ff0000' : 
+                               power > 60 ? '#ffaa00' : 
+                               power > 30 ? '#ffff00' : '#ffffff';
+    } else if (directInput.isLeftMouseDown()) {
+      chargeDebug.textContent = '🔄 CLICK IS DOWN BUT NOT CHARGING!';
+      chargeDebug.style.color = '#ff0000';
+    } else {
+      chargeDebug.textContent = 'CLICK & HOLD to charge';
+      chargeDebug.style.color = '#ffffff';
+    }
+    
+    requestAnimationFrame(updateChargeDebug);
+  }
+  
+  // Start the debug update loop
+  updateChargeDebug();
+  
+  console.log("Weapon controls setup complete");
 }
 
 // Add this call after player initialization
@@ -1178,14 +1267,31 @@ function initializePlayerUI() {
       weaponState.currentWeapon === 'slingshot' ? weaponState.ammo.apple : weaponState.ammo.goldenApple
     }`;
     
-    // Update power meter
+    // FIXED: Update power meter more responsively with debugging
     if (weaponState.isCharging && weaponState.chargeState) {
       powerMeter.style.display = 'block';
-      powerFill.style.width = `${weaponState.chargeState.power * 100}%`;
+      // Calculate percentage fill based on power
+      const powerPercentage = Math.min(100, weaponState.chargeState.power * 100);
+      
+      // Force style change to ensure it shows correctly
+      powerFill.style.width = `${powerPercentage}%`;
+      
+      // Add a data attribute for debugging purposes
+      powerMeter.setAttribute('data-power', powerPercentage.toFixed(1) + '%');
+      
+      // FIXED: Add color animation based on charge level with dynamic styling
+      if (powerPercentage > 80) {
+        powerFill.style.background = '#ff0000'; // Full red at max charge
+      } else if (powerPercentage > 50) {
+        powerFill.style.background = '#ff6600'; // Orange for medium-high charge
+      } else {
+        powerFill.style.background = '#ffcc00'; // Yellow for lower charge
+      }
     } else {
       powerMeter.style.display = 'none';
     }
     
+    // FIXED: Ensure smooth updates
     requestAnimationFrame(updateUI);
   }
   
@@ -1284,7 +1390,8 @@ function initializePlayerUI() {
     const testPosition = cameraPos.clone().addScaledVector(cameraDir, 2);
     const testVelocity = cameraDir.clone().multiplyScalar(40);
     
-    const projectile = player.weaponSystem.projectileSystem.createProjectile(
+    // Create and store the projectile for testing
+    player.weaponSystem.projectileSystem.createProjectile(
       testPosition,
       testVelocity,
       'apple'
@@ -1449,11 +1556,10 @@ function initializePlayerUI() {
         trunkHelper.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), obj.direction);
         trunkHelper.userData = { isCollisionHelper: true };
         scene.add(trunkHelper);
-        
         // Foliage visualization if it's an apple tree (green wireframe)
         if (obj.mesh.name === "AppleTree" || obj.mesh.userData?.isTree) {
           const foliageRadius = obj.radius * 0.6; // 60% of the original collision radius
-          const foliageHeight = obj.radius * 2;
+          // Calculate height but only use radius for sphere geometry
           const foliageGeometry = new THREE.SphereGeometry(foliageRadius, 8, 6);
           const foliageMaterial = new THREE.MeshBasicMaterial({
             color: 0x00ff00,
@@ -1503,8 +1609,7 @@ function initializePlayerUI() {
     
     camera.getWorldPosition(cameraPos);
     camera.getWorldDirection(cameraDir);
-    
-    // Create test projectile
+    // Create test projectile position
     const testPos = cameraPos.clone().addScaledVector(cameraDir, 2); // Start in front of camera
     const projectileSystem = player.weaponSystem.projectileSystem;
     
@@ -1640,12 +1745,12 @@ function initializePlayerUI() {
     
     // Report results
     console.log(`Created ${points.length} test points around object`);
-    
     // Create test projectiles from each point toward the object
     points.forEach(point => {
-      // Direction from point to object center
-      const dirToObj = objPos.clone().sub(point.position).normalize();
+      // Direction calculation not needed for visualization
+      // We just need to create a line from point to object
       
+      // Create line showing test ray
       // Create line showing test ray
       const lineGeo = new THREE.BufferGeometry().setFromPoints([
         point.position,
@@ -1678,7 +1783,6 @@ function initializePlayerUI() {
     // Add cleanup function
     return "Collision test grid created";
   };
-  
   // Add command to adjust projectile radius
   window.adjustProjectileRadius = (multiplier = 1.0) => {
     if (!player?.weaponSystem?.projectileSystem) return "Projectile system not available";
@@ -1687,6 +1791,10 @@ function initializePlayerUI() {
     player.weaponSystem.projectileSystem.options.projectileRadius = oldRadius * multiplier;
     
     const newRadius = player.weaponSystem.projectileSystem.options.projectileRadius;
+    return `Projectile radius adjusted from ${oldRadius.toFixed(2)} to ${newRadius.toFixed(2)}`;
+  };
+  
+  // Add commands to console help
   // Add commands to console help
   console.log(`
   // *****************************************
@@ -1853,7 +1961,7 @@ function initializePlayerUI() {
     return `Created collision visualization for ${count} trees`;
   };
   
-  // Add console help
+  // Add commands to console help
   console.log(`
   // *****************************************
   // ***** TREE COLLISION FIX COMMANDS *****
@@ -2041,4 +2149,89 @@ function initializePlayerUI() {
   enableAppleTrail(true)        // Add motion trails to flying apples
   `);
 }
-}
+
+// Add a special debug command for checking the slingshot charging
+window.debugSlingshot = () => {
+  if (!player?.weaponSystem?.projectileSystem) {
+    return "Weapon system not available";
+  }
+  
+  const slingshotState = player.weaponSystem.projectileSystem.slingshotState;
+  console.log("Slingshot state:", {
+    charging: slingshotState.charging,
+    power: slingshotState.power.toFixed(4),
+    maxPower: slingshotState.maxPower,
+    chargeSpeed: slingshotState.chargeSpeed
+  });
+  
+  // Force the power meter to be visible
+  const powerMeter = document.getElementById('power-meter');
+  const powerFill = document.getElementById('power-fill');
+  if (powerMeter && powerFill) {
+    powerMeter.style.display = 'block';
+    const powerPercentage = Math.min(100, slingshotState.power * 100);
+    powerFill.style.width = `${powerPercentage}%`;
+  }
+  
+  return slingshotState;
+};
+
+// Add a command to test mouse events
+window.testMouseEvents = () => {
+  console.log("Click and hold anywhere to test mouse event handling");
+  
+  // Create test overlay
+  const div = document.createElement('div');
+  div.style.position = 'fixed';
+  div.style.top = '10px';
+  div.style.left = '10px';
+  div.style.background = 'rgba(0,0,0,0.7)';
+  div.style.color = 'white';
+  div.style.padding = '10px';
+  div.style.fontFamily = 'monospace';
+  div.style.zIndex = '1000';
+  div.id = 'mouse-test-overlay';
+  div.innerHTML = 'MOUSE TEST: Click and hold left button...';
+  
+  document.body.appendChild(div);
+  
+  // Track the state
+  const state = {
+    down: false,
+    startTime: 0,
+    elapsed: 0
+  };
+  
+  // Set up test handlers
+  const onDown = (e) => {
+    if (e.button === 0) {
+      state.down = true;
+      state.startTime = Date.now();
+      div.innerHTML = 'MOUSE DOWN - Holding...';
+      div.style.background = 'rgba(255,0,0,0.7)';
+    }
+  };
+  
+  const onUp = (e) => {
+    if (e.button === 0) {
+      state.elapsed = Date.now() - state.startTime;
+      state.down = false;
+      div.innerHTML = `MOUSE UP - Held for: ${state.elapsed}ms`;
+      div.style.background = 'rgba(0,255,0,0.7)';
+    }
+  };
+  
+  // Add the test handlers
+  document.addEventListener('mousedown', onDown);
+  document.addEventListener('mouseup', onUp);
+  
+  // Remove the test after 10 seconds
+  setTimeout(() => {
+    document.removeEventListener('mousedown', onDown);
+    document.removeEventListener('mouseup', onUp);
+    document.body.removeChild(div);
+    console.log("Mouse test ended");
+  }, 10000);
+  
+  return "Test started - click and hold for 10 seconds";
+};

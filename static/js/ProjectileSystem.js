@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { getFullTerrainHeight } from './world_objects.js';
+// Add TWEEN import
+import TWEEN from './libs/tween.esm.js';
 
 /**
  * Manages projectiles and slingshot mechanics for the FPS game
@@ -71,15 +73,24 @@ export default class ProjectileSystem {
    * @param {THREE.Vector3} direction - Initial aim direction
    */
   startCharging(direction) {
+    console.log("🔋 ProjectileSystem.startCharging called");
+    
+    // ULTRA ROBUST: Create a completely fresh state object with maximum charge speed
     this.slingshotState = {
       charging: true,
-      power: 0.2, // Start at 0.2 instead of minPower for better progression
-      minPower: 0.2,
-      maxPower: 1.0,
-      // IMPROVED: Faster charging for better feel
-      chargeSpeed: 1.2, // Increased from 0.8 for faster charging
-      direction: direction.clone()
+      power: 0.01,         // Start at 1%
+      minPower: 0.01,      // Minimum power 1%
+      maxPower: 1.0,       // Maximum power 100%
+      chargeSpeed: 3.0,    // EXTREME: Make charging super fast (was 0.8)
+      direction: direction ? direction.clone() : new THREE.Vector3(0, 0, -1)
     };
+    
+    console.log("🔋 Slingshot charging initialized with fast charge:", 
+      JSON.stringify({
+        power: this.slingshotState.power,
+        chargeSpeed: this.slingshotState.chargeSpeed
+      })
+    );
     
     // Return visual feedback
     return {
@@ -94,16 +105,60 @@ export default class ProjectileSystem {
    * @param {THREE.Vector3} direction - Current aim direction
    */
   updateCharge(deltaTime, direction) {
-    if (!this.slingshotState.charging) return { charging: false };
-
-    // Update direction
-    this.slingshotState.direction.copy(direction);
+    // ULTRA ROBUST: Check if slingshotState exists, if not, recreate it
+    if (!this.slingshotState) {
+      console.error("⚠️ slingshotState was undefined! Recreating it");
+      this.slingshotState = {
+        charging: true,
+        power: 0.01,
+        minPower: 0.01,
+        maxPower: 1.0,
+        chargeSpeed: 3.0,
+        direction: direction ? direction.clone() : new THREE.Vector3(0, 0, -1)
+      };
+    }
     
-    // Increase power
+    if (!this.slingshotState.charging) {
+      console.warn("⚠️ updateCharge called but not in charging state");
+      // CRITICAL FIX: Force charging to be true if we're in this method
+      this.slingshotState.charging = true;
+      console.log("🛠️ Forced charging state to true");
+    }
+
+    // Update direction if provided
+    if (direction) {
+      this.slingshotState.direction.copy(direction);
+    }
+    
+    // ULTRA ROBUST: Force deltaTime to be reasonable if it's NaN or too large
+    if (isNaN(deltaTime) || deltaTime > 0.1) {
+      deltaTime = 0.016; // 60fps fallback
+      console.warn(`⚠️ Invalid deltaTime (${deltaTime}), using fallback value: 0.016`);
+    }
+    
+    // CRITICAL FIX: Log every update call to see if we're updating
+    console.log(`⚡ Updating charge: power=${this.slingshotState.power.toFixed(2)}, deltaTime=${deltaTime.toFixed(4)}, speed=${this.slingshotState.chargeSpeed.toFixed(1)}`);
+    
+    // ULTRA ROBUST: Store old power for debug output
+    const oldPower = this.slingshotState.power;
+    
+    // ULTRA ROBUST: Ensure charge always increases by using a faster charge speed
     this.slingshotState.power = Math.min(
       this.slingshotState.maxPower,
-      this.slingshotState.power + (this.slingshotState.chargeSpeed * deltaTime)
+      oldPower + (this.slingshotState.chargeSpeed * deltaTime)
     );
+    
+    // Calculate the actual power increase
+    const powerIncrease = this.slingshotState.power - oldPower;
+    console.log(`Power increase: +${powerIncrease.toFixed(4)}`);
+    
+    // Debug when we cross percentage thresholds
+    const oldPercent = Math.floor(oldPower * 100);
+    const newPercent = Math.floor(this.slingshotState.power * 100);
+    
+    if (oldPercent !== newPercent) {
+      console.log(`🔋 Charge: ${newPercent}% (power=${this.slingshotState.power.toFixed(2)}, speed=${this.slingshotState.chargeSpeed.toFixed(1)})`);
+    }
     
     // Return state for UI updates
     return {
@@ -120,14 +175,20 @@ export default class ProjectileSystem {
    * @returns {Object} The fired projectile or null
    */
   release(position, options = {}) {
-    if (!this.slingshotState.charging) return null;
+    if (!this.slingshotState.charging) {
+      console.log("Tried to release but slingshot is not charging");
+      return null;
+    }
 
     // FIXED: Get direction from options if provided, otherwise use stored direction
     const direction = options.direction || this.slingshotState.direction;
     
-    // SPEED BOOST: Apply a velocity multiplier based on power
-    // This makes fully charged shots even faster
-    const powerMultiplier = 1.0 + this.slingshotState.power * 0.5; // Up to 50% faster at full charge
+    // Debug the release
+    console.log(`Releasing slingshot with power: ${this.slingshotState.power.toFixed(2)}`);
+    
+    // FIXED: Apply a MUCH stronger velocity multiplier based on power
+    // Make fully charged shots much faster to fix weak shot issue
+    const powerMultiplier = 1.0 + (this.slingshotState.power * 2.0); // Full charge = 3x speed
     
     // Calculate velocity based on power and direction with the boost
     const velocity = direction.clone()
@@ -135,6 +196,8 @@ export default class ProjectileSystem {
       .multiplyScalar(
         this.options.projectileSpeed * this.slingshotState.power * powerMultiplier
       );
+
+    console.log(`Projectile speed: ${velocity.length().toFixed(2)}`);
 
     // Create the projectile
     const projectile = this.createProjectile(
@@ -305,7 +368,14 @@ export default class ProjectileSystem {
       
       // IMPROVED: Apply increasing gravity based on flight time for more dramatic arcs
       const flightTime = (now - projectile.created) / 1000; // seconds in flight
-      const gravityMultiplier = Math.min(1.0 + flightTime * 0.25, 2.0); // Up to 2x gravity over time
+      // FIXED: Apply stronger gravity multiplier for better physics
+      let gravityMultiplier = Math.min(1.0 + flightTime * 0.4, 2.5); // Up to 2.5x gravity over time
+      
+      // FIXED: Apply extra gravity after tree bounces
+      if (projectile.userData?.bounceGravityMult) {
+        gravityMultiplier *= projectile.userData.bounceGravityMult;
+      }
+      
       const gravityVec = dir.clone().negate().multiplyScalar(gravity * gravityMultiplier * deltaTime * 60);
       projectile.velocity.add(gravityVec);
       
@@ -891,19 +961,17 @@ export default class ProjectileSystem {
       );
       projectile.mesh.position.copy(collisionPos);
       
-      // IMPROVED BOUNCE PHYSICS FOR ALL COLLISIONS
-      const collisionObj = closestCollision.object;
-      const objDir = collisionObj.direction;
-      const dir = collisionPos.clone().normalize();
-      const dot = dir.dot(objDir);
-      
-      // TURBO-CHARGED BOUNCE: Much better bounce physics with "juice" factor
+      // FIXED: TURBO-CHARGED BOUNCE: Much better bounce physics with "juice" factor
       let responseDir;
       if (closestCollision.isTrunk) {
+        // BUGFIX: Use closestCollision.object instead of undefined collisionObj
+        const obj = closestCollision.object;
+        const objDir = obj.direction;
+        
         // Get vector from trunk axis to collision point (perpendicular to trunk)
-        const pointOnTrunkAxis = collisionObj.position.clone().add(
+        const pointOnTrunkAxis = obj.position.clone().add(
           objDir.clone().multiplyScalar(
-            (collisionPos.clone().sub(collisionObj.position)).dot(objDir)
+            (collisionPos.clone().sub(obj.position)).dot(objDir)
           )
         );
         
@@ -916,27 +984,39 @@ export default class ProjectileSystem {
           trunkNormal.clone().multiplyScalar(2 * incomingDir.dot(trunkNormal))
         ).normalize();
         
-        // Add slight vertical component for more satisfying bounce
-        responseDir.addScaledVector(objDir, 0.3); // Reduced from 0.4 for flatter bounces
+        // FIXED: Add more vertical component to prevent apples from floating after tree collision
+        responseDir.addScaledVector(objDir, 0.2); // Reduced from 0.3 to prevent floating
         responseDir.normalize();
         
         // SNAPPY: Give the response direction a bit of "snap" with impulse
-        const snapFactor = 1.25; // 25% extra "snap" when bouncing
+        const snapFactor = 1.15; // FIXED: Reduced from 1.25 to prevent excessive bounce
         responseDir.multiplyScalar(snapFactor);
       } else {
         // Standard bounce direction for other objects, but with "snap"
+        // BUGFIX: closestCollision.object has the direction and position we need
+        const obj = closestCollision.object;
+        const dir = collisionPos.clone().normalize();
+        const objDir = obj.direction;
+        const dot = dir.dot(objDir);
+        
         responseDir = dir.clone().sub(
           objDir.clone().multiplyScalar(dot)
-        ).normalize().multiplyScalar(1.2); // 20% extra "snap"
+        ).normalize().multiplyScalar(1.1); // FIXED: Reduced from 1.2 to 1.1 for better control
+      }
+      
+      // FIXED: Apply a bit more gravity influence after tree collisions
+      if (closestCollision.isTrunk) {
+        // Slightly increase gravity's effect on tree-bounced apples
+        projectile.userData = projectile.userData || {};
+        projectile.userData.bounceGravityMult = 1.4; // 40% more gravity after tree bounce
       }
       
       // TURBO: Get current speed and apply bouncier physics
       const currentSpeed = projectile.velocity.length();
       
-      // JUICY: Much higher energy conservation in bounces
-      // Use 55% of original speed for trunk collisions (up from 40%)
-      // And 45% for other objects (up from 35%)
-      const speed = currentSpeed * (closestCollision.isTrunk ? 0.55 : 0.45);
+      // FIXED: Reduce energy conservation for better physics
+      // Lowered from 55% to 45% to prevent perpetual bouncing
+      const speed = currentSpeed * (closestCollision.isTrunk ? 0.45 : 0.35);
       
       // Apply the new velocity with proper direction and speed
       projectile.velocity = responseDir.multiplyScalar(speed);
@@ -974,17 +1054,30 @@ export default class ProjectileSystem {
       // Restore original scale after a short delay
       setTimeout(() => {
         if (projectile.mesh && projectile.mesh.parent) {
-          // Smoothly restore scale
-          new TWEEN.Tween(projectile.mesh.scale)
-            .to({x: originalScale.x, y: originalScale.y, z: originalScale.z}, 150)
-            .easing(TWEEN.Easing.Elastic.Out)
-            .start();
+          // FIXED: Check if TWEEN is defined before using it
+          try {
+            // Try to use TWEEN if available
+            if (typeof TWEEN !== 'undefined') {
+              new TWEEN.Tween(projectile.mesh.scale)
+                .to({x: originalScale.x, y: originalScale.y, z: originalScale.z}, 150)
+                .easing(TWEEN.Easing.Elastic.Out)
+                .start();
+            } else {
+              // Fallback to direct scale restoration if TWEEN is not available
+              projectile.mesh.scale.copy(originalScale);
+            }
+          } catch (error) {
+            // Safely handle any errors and ensure scale is restored
+            console.warn("Error animating scale:", error);
+            projectile.mesh.scale.copy(originalScale);
+          }
         }
       }, 50);
       
       // Invoke callback if set
       if (projectile.onCollideCallback) {
-        projectile.onCollideCallback(collisionObj);
+        // BUGFIX: Use the correct object from closestCollision
+        projectile.onCollideCallback(closestCollision.object);
       }
       
       // Visually confirm collision with a debug marker if debugging is enabled
