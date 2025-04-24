@@ -161,8 +161,8 @@ export default class Player {
     // Re-orthonormalize player axes - STILL IMPORTANT
     this.orientHelper.update();
 
-    // Update the weapon system
-    this.weaponSystem.update(delta);
+    // Update the weapon system - pass player position
+    this.weaponSystem.update(delta, this.playerObject.position);
     
     // Update weapon switch timer
     if (this.weaponInput.weaponSwitchTimer > 0) {

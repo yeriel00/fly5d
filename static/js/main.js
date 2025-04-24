@@ -12,6 +12,7 @@ import LowPolyGenerator from './low_poly_generator.js';
 import Player from './player.js';
 // Import TWEEN.js for smooth animations
 import TWEEN from '/static/js/libs/tween.esm.js';
+import Crosshair from './ui/crosshair.js';
 
 // --- Constants ---
 const R = 400; // INCREASED radius from 300 to 400 for more spacious feel
@@ -1166,6 +1167,9 @@ function initializePlayerUI() {
   // Set up weapon controls
   setupWeaponControls();
   
+  // Create crosshair
+  const crosshair = new Crosshair();
+  
   // Add ammo UI element
   const ammoDisplay = document.createElement('div');
   ammoDisplay.id = 'ammo-display';
@@ -1219,8 +1223,14 @@ function initializePlayerUI() {
     if (weaponState.isCharging && weaponState.chargeState) {
       powerMeter.style.display = 'block';
       powerFill.style.width = `${weaponState.chargeState.power * 100}%`;
+      
+      // Update crosshair to match charging state
+      crosshair.update(weaponState);
     } else {
       powerMeter.style.display = 'none';
+      
+      // Reset crosshair
+      crosshair.update({ isCharging: false });
     }
     
     requestAnimationFrame(updateUI);
