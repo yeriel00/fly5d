@@ -47,7 +47,7 @@ export default class Player {
     this.weaponSystem = new WeaponSystem(scene, this.camera, {
       sphereRadius: this.options.sphereRadius,
       gravity: this.options.gravity * 0.75, // Use slightly less gravity for projectiles
-      projectileSpeed: 40,
+      projectileSpeed: 160, // INCREASED: Quadrupled from 40 to 160 for much faster projectiles
       projectileRadius: 0.8,
       getTerrainHeight: this.options.getTerrainHeight,
       collidables: this.options.collidables

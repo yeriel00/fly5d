@@ -15,7 +15,7 @@ export default class WeaponSystem {
     this.scene = scene;
     this.camera = camera;
     this.options = Object.assign({
-      projectileSpeed: 130,
+      projectileSpeed: 520, // INCREASED: 4x from 130 to 520 for much faster apples
       maxAmmo: {
         apple: 50,
         goldenApple: 10
@@ -443,10 +443,11 @@ export default class WeaponSystem {
     // Determine projectile type based on weapon
     const projectileType = this.currentWeapon === 'goldenSlingshot' ? 'goldenApple' : 'apple';
 
-    // Release the projectile
+    // Release the projectile - use 25% more speed for dramatic effect
     const result = this.projectileSystem.release(launchPos, {
       direction: cameraDir,
-      type: projectileType
+      type: projectileType,
+      speedMultiplier: 1.25 // Extra speed boost
     });
     
     // If we successfully fired a projectile
