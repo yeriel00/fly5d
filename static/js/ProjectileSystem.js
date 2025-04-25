@@ -1,946 +1,783 @@
 import * as THREE from 'three';
-import { getFullTerrainHeight } from './world_objects.js';
-// Import TWEEN.js for animations
 import TWEEN from './libs/tween.esm.js';
 
 /**
- * Manages projectiles and slingshot mechanics for the FPS game
+ * System to manage projectile physics and collisions
  */
 export default class ProjectileSystem {
   /**
    * Create a new projectile system
-   * @param {THREE.Scene} scene - The 3D scene
+   * @param {THREE.Scene} scene - The scene
    * @param {Object} options - Configuration options
    */
   constructor(scene, options = {}) {
     this.scene = scene;
+    
+    // Debug flag to enable visual debugging
+    this.debug = false;
+    
+    // Configure with defaults
     this.options = Object.assign({
-      sphereRadius: 400,
+      projectileSpeed: 40,
       gravity: 0.15,
-      projectileRadius: 1.0,
-      projectileSpeed: 130, // Match the WeaponSystem's faster speed
-      maxProjectiles: 50,
-      projectileLifetime: 6000, // milliseconds
-      // IMPROVED: Ultra-bouncy collisions
-      bounceFactor: 0.75, // Increased from 0.6 for super bouncy feel
-      // IMPROVED: Keep bouncing longer before disappearing
-      minBounceSpeed: 4.0, // Slightly lower to allow more bounces
-      getTerrainHeight: getFullTerrainHeight,
-      collidables: []
+      sphereRadius: 400,
+      getTerrainHeight: null,
+      projectileRadius: 3.0,
+      maxProjectiles: 20,
+      lifetime: 10, // Seconds until projectiles despawn
+      bounceFactor: 0.6, // Energy loss on bounce
+      minBounceSpeed: 5.0, // Minimum speed needed to bounce
+      collidables: null, // Array of object collision data
+      showCollisions: false, // Display collision effects
+      splashParticleCount: 5, // Number of particles in collision splash
+      debugCollisions: false // New option to log collision details
     }, options);
-
-    // Projectile collections
+    
+    // Add enableCollisionLogging flag that can be set externally
+    this.enableCollisionLogging = false;
+    
+    // List of active projectiles
     this.projectiles = [];
-    this.projectilePool = [];
-
-    // Slingshot state
-    this.slingshotState = {
-      charging: false,
-      power: 0,
-      minPower: 0.2,
-      maxPower: 1.0,
-      chargeSpeed: 0.8, // Power increase per second
-      direction: new THREE.Vector3()
+    
+    // Cache materials
+    this.materials = {
+      apple: new THREE.MeshLambertMaterial({ 
+        color: 0xff2200, 
+        emissive: 0x441100
+      }),
+      goldenApple: new THREE.MeshLambertMaterial({ 
+        color: 0xffdd00, 
+        emissive: 0x443300
+      })
     };
+    
+    // Reusable vectors for physics calculations
+    this._vec3 = new THREE.Vector3();
+    this._vec3b = new THREE.Vector3();
+    
+    console.log("Projectile system created with collisions enabled");
 
-    // Initialize projectile materials
-    this.initMaterials();
+    // Debug log to verify collidables are being passed
+    if (this.options.collidables && this.options.collidables.length > 0) {
+      console.log(`ProjectileSystem initialized with ${this.options.collidables.length} collidables`);
+      
+      // Count trees and rocks
+      const trees = this.options.collidables.filter(obj => 
+        obj.mesh?.userData?.isTree || obj.mesh?.userData?.isPineTree
+      ).length;
+      
+      const rocks = this.options.collidables.filter(obj => 
+        obj.mesh?.userData?.isRock
+      ).length;
+      
+      console.log(`Collision objects: ${trees} trees, ${rocks} rocks`);
+    } else {
+      console.warn("ProjectileSystem initialized with NO collidables");
+    }
   }
-
-  /**
-   * Initialize materials for different projectile types
-   */
-  initMaterials() {
-    // Create more visible apple material with better lighting properties
-    this.appleMaterial = new THREE.MeshStandardMaterial({
-      color: 0xff2200,  // Brighter red
-      roughness: 0.6,
-      metalness: 0.1,
-      emissive: 0x330000, // Slight emissive glow
-    });
-
-    // Make golden apples more visible too
-    this.goldenAppleMaterial = new THREE.MeshStandardMaterial({
-      color: 0xffdd00,  // Brighter gold
-      roughness: 0.4,
-      metalness: 0.8,
-      emissive: 0x332200, // Golden glow
-    });
-  }
-
-  /**
-   * Start charging the slingshot
-   * @param {THREE.Vector3} direction - Initial aim direction
-   */
-  startCharging(direction) {
-    this.slingshotState = {
-      charging: true,
-      power: 0.2, // Start at 0.2 instead of minPower for better progression
-      minPower: 0.2,
-      maxPower: 1.0,
-      // IMPROVED: Faster charging for better feel
-      chargeSpeed: 1.2, // Increased from 0.8 for faster charging
-      direction: direction.clone()
-    };
-
-    // Return visual feedback
-    return {
-      charging: true,
-      power: this.slingshotState.power
-    };
-  }
-
-  /**
-   * Update charge level while holding
-   * @param {number} deltaTime - Time since last update
-   * @param {THREE.Vector3} direction - Current aim direction
-   */
-  updateCharge(deltaTime, direction) {
-    if (!this.slingshotState.charging) return { charging: false };
-
-    // Update direction
-    this.slingshotState.direction.copy(direction);
-
-    // Increase power
-    this.slingshotState.power = Math.min(
-      this.slingshotState.maxPower,
-      this.slingshotState.power + (this.slingshotState.chargeSpeed * deltaTime)
-    );
-
-    // Return state for UI updates
-    return {
-      charging: true,
-      power: this.slingshotState.power,
-      direction: this.slingshotState.direction.clone()
-    };
-  }
-
-  /**
-   * Release the slingshot to fire a projectile
-   * @param {THREE.Vector3} position - Launch position
-   * @param {Object} options - Optional parameters like projectile type
-   * @returns {Object} The fired projectile or null
-   */
-  release(position, options = {}) {
-    if (!this.slingshotState.charging) return null;
-
-    // FIXED: Get direction from options if provided, otherwise use stored direction
-    const direction = options.direction || this.slingshotState.direction;
-
-    // Calculate velocity based on power and direction
-    const velocity = direction.clone()
-      .normalize()
-      .multiplyScalar(
-        this.options.projectileSpeed * this.slingshotState.power
-      );
-
-    // Create the projectile
-    const projectile = this.createProjectile(
-      position.clone(),
-      velocity,
-      options.type || 'apple'
-    );
-
-    // Reset slingshot state
-    const finalPower = this.slingshotState.power;
-    this.slingshotState.charging = false;
-    this.slingshotState.power = 0;
-
-    return {
-      projectile,
-      power: finalPower
-    };
-  }
-
-  /**
-   * Cancel the current charge without firing
-   */
-  cancelCharge() {
-    this.slingshotState.charging = false;
-    this.slingshotState.power = 0;
-  }
-
+  
   /**
    * Create a new projectile
    * @param {THREE.Vector3} position - Starting position
    * @param {THREE.Vector3} velocity - Initial velocity
-   * @param {string} type - Projectile type ('apple', 'goldenApple')
-   * @returns {Object} The projectile object
+   * @param {string} type - Projectile type ('apple' or 'goldenApple')
+   * @returns {Object} The created projectile
    */
   createProjectile(position, velocity, type = 'apple') {
-    // FIXED: Add debug log for projectile creation
-    console.log(`Creating ${type} projectile. Active: ${this.projectiles.length}, Pool: ${this.projectilePool.length}`);
-    
-    // Try to reuse a projectile from pool
-    let projectile = this.projectilePool.pop();
-    if (!projectile) {
-      // IMPROVED: Create larger apple geometry with more segments for better appearance
-      // Increase radius by 3x from the default and use more segments for smoother look
-      const geometry = new THREE.SphereGeometry(this.options.projectileRadius * 3, 12, 10);
-      // Create mesh with appropriate material based on type
-      const material = type === 'goldenApple' ? this.goldenAppleMaterial : this.appleMaterial;
-      const mesh = new THREE.Mesh(geometry, material);
-      // Enable shadows for better visibility
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-
-      // IMPORTANT: Add a stem to make it clearly look like an apple
-      const stemGeometry = new THREE.CylinderGeometry(0.1, 0.1, 0.5, 4);
-      stemGeometry.translate(0, this.options.projectileRadius * 3, 0); // Position at top of apple
-      const stemMaterial = new THREE.MeshStandardMaterial({ 
-        color: 0x553311, 
-        roughness: 0.9 
-      });
-      const stem = new THREE.Mesh(stemGeometry, stemMaterial);
-      mesh.add(stem); // Add stem as child of apple
-
-      // Create projectile object
-      projectile = {
-        mesh,
-        velocity: new THREE.Vector3(),
-        type,
-        active: true,
-        created: Date.now(),
-        hasCollided: false,
-        onCollideCallback: null
-      };
+    // Enforce maximum projectile limit by removing oldest if needed
+    if (this.projectiles.length >= this.options.maxProjectiles) {
+      const oldest = this.projectiles.shift();
+      if (oldest.mesh) this.scene.remove(oldest.mesh);
     }
-
-    // Set up the projectile
-    projectile.mesh.position.copy(position);
-    projectile.velocity.copy(velocity);
-
-    // IMPROVED: Add spin to the projectile for more realistic flight
-    projectile.spin = {
-      axis: new THREE.Vector3(
-        Math.random() - 0.5,
-        Math.random() - 0.5,
-        Math.random() - 0.5,
-      ).normalize(),
-      speed: Math.random() * 2 + 3 // Random spin speed between 3-5 radians/sec
+    
+    // Create geometry based on type
+    const geometry = new THREE.SphereGeometry(
+      this.options.projectileRadius, 
+      10, 8
+    );
+    
+    // Select material based on type
+    const material = this.materials[type] || this.materials.apple;
+    
+    // Create mesh
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.castShadow = true;
+    
+    // Add a small stem to apples
+    const stemGeometry = new THREE.CylinderGeometry(
+      0.3, 0.3, 1.5, 4
+    );
+    stemGeometry.translate(0, this.options.projectileRadius, 0);
+    const stemMaterial = new THREE.MeshLambertMaterial({ color: 0x553311 });
+    const stem = new THREE.Mesh(stemGeometry, stemMaterial);
+    
+    // Randomize stem orientation
+    stem.rotation.y = Math.random() * Math.PI * 2;
+    mesh.add(stem);
+    
+    // Position mesh at start point
+    mesh.position.copy(position);
+    
+    // Create projectile object
+    const projectile = {
+      position: position.clone(),
+      velocity: velocity.clone(),
+      mesh: mesh,
+      createdAt: Date.now(),
+      type: type,
+      bounces: 0,
+      maxBounces: type === 'goldenApple' ? 3 : 2,
+      lastPosition: position.clone() // Store last position for collision detection
     };
-
-    projectile.active = true;
-    projectile.created = Date.now();
-    projectile.hasCollided = false;
-
-    // FIXED: Create proper orientation for the apple
-    // Ensure the apple's stem always points "up" relative to the planet surface
-    const dirToCenter = position.clone().negate().normalize();
-    const directionOfTravel = velocity.clone().normalize();
-    // Set quaternion to orient the apple with stem away from planet center
-    projectile.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dirToCenter);
-
-    // Add to scene and active projectiles list
-    this.scene.add(projectile.mesh);
-    this.projectiles.push(projectile);
-
-    // Log creation for debugging
-    console.log(`Created ${type} projectile at position:`, position);
-    console.log(`Velocity:`, velocity);
-    console.log(`Total active projectiles: ${this.projectiles.length}`);
     
-    // Limit total projectiles by removing oldest if needed
-    if (this.projectiles.length > this.options.maxProjectiles) {
-      this.removeProjectile(this.projectiles[0]);
-    }
-
+    // Add to scene and tracking list
+    this.scene.add(mesh);
+    this.projectiles.push(projectile);
+    
     return projectile;
   }
-
-  /**
-   * Remove a projectile and return it to the pool
-   * @param {Object} projectile - The projectile to remove
-   */
-  removeProjectile(projectile) {
-    const index = this.projectiles.indexOf(projectile);
-    if (index !== -1) {
-      this.projectiles.splice(index, 1);
-      this.scene.remove(projectile.mesh);
-      
-      // FIXED: Enhanced debugging for projectile removal
-      console.log(`Removing projectile. Active projectiles left: ${this.projectiles.length}, Pool size: ${this.projectilePool.length}`);
-      
-      // FIXED: Better cleanup to ensure no memory leaks
-      if (projectile.debugLight) {
-        projectile.mesh.remove(projectile.debugLight);
-        projectile.debugLight = null;
-      }
-      
-      // Reset the projectile state more thoroughly before pooling
-      projectile.active = false;
-      projectile.hasCollided = false;
-      projectile.removeTime = null;
-      projectile.shouldRemove = false;
-      projectile.onCollideCallback = null;
-      projectile.velocity.set(0, 0, 0);
-      
-      // Reset scale to prevent issues with squashed projectiles
-      projectile.mesh.scale.set(1, 1, 1);
-      
-      // Pool the projectile for reuse
-      this.projectilePool.push(projectile);
-    } else {
-      console.warn("Attempted to remove projectile that doesn't exist in active list");
-    }
-  }
-
+  
   /**
    * Update all projectiles
-   * @param {number} deltaTime - Time since last frame in seconds
+   * @param {number} deltaTime - Time since last update in seconds
    */
   update(deltaTime) {
-    // FIXED: Make sure TWEEN is available before using it
-    if (TWEEN) {
-      TWEEN.update();
-    }
-
-    const now = Date.now();
-    const gravity = this.options.gravity;
-    const sphereRadius = this.options.sphereRadius;
-    const expiredProjectiles = [];
-
-    // FIXED: Debug output for tracking projectile counts
-    if (Math.random() < 0.01) { // Only log occasionally
-      console.log(`Active projectiles: ${this.projectiles.length}, Pool: ${this.projectilePool.length}`);
+    // Count object types in collidables if debug is enabled
+    if ((this.enableCollisionLogging || this.options.debugCollisions) && 
+        this.projectiles.length > 0 && 
+        this._lastDebugTime === undefined) {
+      this._lastDebugTime = Date.now();
+      
+      // Log collision info
+      const collidables = this.options.collidables || [];
+      const treeCount = collidables.filter(obj => 
+        obj.mesh?.userData?.isTree || obj.mesh?.userData?.isPineTree
+      ).length;
+      
+      console.log(`Projectile system has ${this.projectiles.length} projectiles, ${collidables.length} collidables (${treeCount} trees)`);
     }
     
-    // Update each active projectile
-    for (const projectile of this.projectiles) {
-      // FIXED: Extra check to ensure the projectile is still valid
-      if (!projectile.mesh || !projectile.mesh.parent) {
-        console.warn("Found invalid projectile, removing it");
-        expiredProjectiles.push(projectile);
-        continue;
-      }
-    
+    // Process all active projectiles
+    for (let i = this.projectiles.length - 1; i >= 0; i--) {
+      const projectile = this.projectiles[i];
+      
       // Check lifetime
-      if (now - projectile.created > this.options.projectileLifetime) {
-        console.log("Projectile expired due to lifetime");
-        expiredProjectiles.push(projectile);
-        continue;
-      }
-
-      // Check delayed removal time (for better bounce visualization)
-      if (projectile.removeTime && now > projectile.removeTime) {
-        console.log("Projectile removed due to scheduled removal");
-        expiredProjectiles.push(projectile);
+      const age = (Date.now() - projectile.createdAt) / 1000;
+      if (age > this.options.lifetime) {
+        this._removeProjectile(i);
         continue;
       }
       
-      // FIXED: Also check the shouldRemove flag
-      if (projectile.shouldRemove) {
-        console.log("Projectile removed due to shouldRemove flag");
-        expiredProjectiles.push(projectile);
+      // Store last position for collision line detection
+      projectile.lastPosition.copy(projectile.position);
+      
+      // Apply physics
+      this._updateProjectilePhysics(projectile, deltaTime);
+      
+      // Check for collisions with objects (trees, rocks, etc.)
+      if (this._checkObjectCollisions(projectile)) {
+        // Projectile hit something, remove it and continue
+        this._removeProjectile(i);
         continue;
       }
-
-      // Get current position and normalized direction (for gravity)
-      const pos = projectile.mesh.position;
-      const dir = pos.clone().normalize();
-
-      // IMPROVED: Apply increasing gravity based on flight time for more dramatic arcs
-      const flightTime = (now - projectile.created) / 1000; // seconds in flight
-      const gravityMultiplier = Math.min(1.0 + flightTime * 0.25, 2.0); // Up to 2x gravity over time
-      const gravityVec = dir.clone().negate().multiplyScalar(gravity * gravityMultiplier * deltaTime * 60);
-      projectile.velocity.add(gravityVec);
-
-      // NEW APPROACH: Continuous collision detection
-      // Store original position before applying velocity
-      const originalPos = pos.clone();
-
-      // Calculate the intended position after velocity is applied
-      const intendedPos = originalPos.clone().add(
-        projectile.velocity.clone().multiplyScalar(deltaTime)
-      );
-
-      // Create a ray from original position to intended position
-      const moveDir = intendedPos.clone().sub(originalPos).normalize();
-      const moveDistance = originalPos.distanceTo(intendedPos);
-
-      // Track if we had a collision
-      let hadCollision = false;
-
-      // First check if the movement ray intersects any objects
-      // Use a slightly larger collision radius for this check to be more conservative
-      const collisionPadding = 1.5; // Extra safety factor
-
-      // Check objects first (more important visually than terrain)
-      const objectCollision = this._checkContinuousObjectCollisions(
-        projectile,
-        originalPos,
-        moveDir,
-        moveDistance,
-        collisionPadding
-      );
-
-      if (objectCollision) {
-        // We hit an object - apply the collision response
-        hadCollision = true;
-        // Object collisions are already handled by _checkContinuousObjectCollisions
+      
+      // Update mesh position
+      if (projectile.mesh) {
+        projectile.mesh.position.copy(projectile.position);
         
-        // Log collision information
-        if (Math.random() < 0.05) { // Only log occasionally
-          console.log("Object collision at distance:", objectCollision.distance);
-        }
-      } else {
-        // If no object collisions, check terrain collision
-        const terrainCollision = this._checkContinuousTerrainCollision(
-          projectile,
-          originalPos,
-          moveDir,
-          moveDistance,
-          sphereRadius
-        );
-
-        if (terrainCollision) {
-          hadCollision = true;
-          // Terrain collisions are handled by _checkContinuousTerrainCollision
-        } else {
-          // No collision occurred, move normally
-          pos.copy(intendedPos);
-        }
+        // Add slight rotation for visual interest
+        projectile.mesh.rotation.x += deltaTime * 2;
+        projectile.mesh.rotation.z += deltaTime * 3;
       }
-
-      // IMPROVED: Apply spin for visual effect (outside collision handling)
-      if (projectile.spin) {
-        projectile.mesh.rotateOnAxis(projectile.spin.axis, projectile.spin.speed * deltaTime);
-      }
-
-      // Update projectile orientation to follow trajectory
-      if (!hadCollision && projectile.velocity.lengthSq() > 0.1) {
-        // Update orientation based on current velocity and direction
-        const forward = projectile.velocity.clone().normalize();
-        const up = dir.clone(); // Always point stem away from planet center
-        const right = new THREE.Vector3().crossVectors(forward, up).normalize();
-        // Recalculate up to ensure orthogonality
-        const correctedUp = new THREE.Vector3().crossVectors(right, forward).normalize();
-        // Create rotation matrix and apply
-        const rotMatrix = new THREE.Matrix4().makeBasis(right, correctedUp, forward.negate());
-        projectile.mesh.quaternion.setFromRotationMatrix(rotMatrix);
-      }
-    }
-
-    // Clean up expired projectiles
-    for (const projectile of expiredProjectiles) {
-      this.removeProjectile(projectile);
     }
   }
-
+  
   /**
-   * Extract terrain collision into a separate method for cleaner code
-   */
-  _checkTerrainCollision(projectile, sphereRadius) {
-    const pos = projectile.mesh.position;
-    const dir = pos.clone().normalize();
-
-    // Check terrain collision
-    const terrainHeight = this.options.getTerrainHeight(dir);
-    const terrainRadius = sphereRadius + terrainHeight;
-
-    // If collided with terrain
-    if (pos.length() < terrainRadius + this.options.projectileRadius) {
-      if (!projectile.hasCollided) {
-        projectile.hasCollided = true;
-
-        // Handle collision - bounce with energy loss
-        const upDir = dir.clone();
-        const verticalVel = projectile.velocity.dot(upDir);
-        if (verticalVel < 0) {
-          // Remove downward component
-          projectile.velocity.addScaledVector(upDir, -verticalVel * 1.6);
-          // IMPROVED: Use configured bounce factor
-          projectile.velocity.multiplyScalar(this.options.bounceFactor);
-          // IMPROVED: Add slight randomization to bounces for natural feel
-          const randomDir = new THREE.Vector3(
-            (Math.random() - 0.5) * 0.3,
-            (Math.random() - 0.5) * 0.3,
-            (Math.random() - 0.5) * 0.3,
-          );
-          projectile.velocity.add(randomDir);
-          // IMPROVED: Use configured minimum bounce speed
-          if (projectile.velocity.length() < this.options.minBounceSpeed) {
-            return true; // Mark for expiration
-          }
-          // Move above ground to prevent sticking
-          pos.copy(dir.multiplyScalar(terrainRadius + this.options.projectileRadius * 1.2));
-        }
-        return true; // Collision occurred
-      }
-    } else {
-      // Reset collision flag when not colliding
-      projectile.hasCollided = false;
-    }
-    return false; // No collision
-  }
-
-  /**
-   * Renamed method for clarity and improved collision detection
+   * Check for collisions with scene objects
+   * @param {Object} projectile - The projectile to check
+   * @returns {boolean} Whether a collision occurred
+   * @private
    */
   _checkObjectCollisions(projectile) {
-    if (!this.options.collidables || this.options.collidables.length < 2) return false;
-
-    const pos = projectile.mesh.position;
-    const dir = pos.clone().normalize();
-
-    // IMPROVED: Store projectile properties for more efficient access
-    const projectileRadius = this.options.projectileRadius;
-    const projectileHeight = pos.length() - this.options.sphereRadius;
-
-    // Skip the first collidable (planet itself)
-    for (let i = 1; i < this.options.collidables.length; i++) {
-      const obj = this.options.collidables[i];
-
-      // Skip non-collidable objects
-      if (!obj.position || !obj.direction || obj.noCollision) continue;
-
-      // IMPROVED: Use more precise collision detection based on object type
-      const isTree = obj.mesh?.userData?.isTree || obj.mesh?.userData?.isPineTree;
-      const isRock = obj.mesh?.userData?.isRock || obj.mesh?.name?.includes('Rock');
-
-      // IMPROVED: Early rejection test - check basic distance first for performance
-      const objPos = obj.position;
-      const basicDist = pos.distanceTo(objPos);
-      const maxPossibleRadius = Math.max(20, obj.radius * 2); // Safety margin
-      if (basicDist > maxPossibleRadius + projectileRadius) continue;
-
-      // Get angular distance between projectile and object (great-circle distance on sphere)
-      const objDir = obj.direction;
-      const dot = dir.dot(objDir);
-      const angle = Math.acos(Math.min(Math.max(dot, -1), 1));
-      const surfaceDist = angle * this.options.sphereRadius;
-
-      // IMPROVED: Calculate object-specific collision parameters with better precision
-      let collisionRadius = projectileRadius;
-      let heightMatch = true;
-      if (isTree) {
-        // For trees, use trunk radius for horizontal collision - even more accurate
-        // Use a very tight collision radius instead of the loose one
-        collisionRadius += Math.min(obj.radius * 0.2, 0.6); // Even tighter radius (was 0.25, 0.8)
-        // Check height to see if we're hitting the trunk or foliage
-        const objHeight = obj.position.length() - this.options.sphereRadius;
-        const heightDiff = projectileHeight - objHeight;
-        // Get trunk height (estimate if not specified)
-        const trunkHeight = obj.collisionHeight || obj.radius * 2;
-        // IMPROVED: More precise height check for tree parts
-        if (heightDiff <= 0) {
-          // Below ground level
-          heightMatch = false;
-        } else if (heightDiff <= trunkHeight) {
-          // We're at trunk height - use narrow trunk radius
-          collisionRadius = projectileRadius + Math.min(obj.radius * 0.2, 0.6);
-        } else if (heightDiff < trunkHeight + (obj.radius * 2.2)) {
-          // We're at foliage height - use wider foliage radius
-          collisionRadius = projectileRadius + obj.radius * 0.7; // Was 0.6, increased for better response
-        } else {
-          // Above tree height
-          heightMatch = false;
-        }
-      } else if (isRock) {
-        // IMPROVED: Reduce rock collision radius less for more accurate hits
-        collisionRadius += obj.radius * 0.8; // Was 0.7, increased for better responsiveness
-      } else {
-        // Default collision radius
-        collisionRadius += obj.radius || 1.0;
+    // Skip if no collidables
+    if (!this.options.collidables || this.options.collidables.length === 0) {
+      // Debug this more aggressively to catch if collidables is empty
+      if (Math.random() < 0.01) { // Log only occasionally to avoid spam
+        console.warn("ProjectileSystem: No collidables available for collision detection");
       }
-
-      // IMPROVED: Add debug visualization for collisions in flight
-      if (heightMatch && Math.random() < 0.01) { // Only show occasionally
-        this._visualizeCollisionCheck(pos, obj.position, surfaceDist, collisionRadius, 
-                                     surfaceDist < collisionRadius);
-      }
-
-      // Check if collision occurs with the refined parameters
-      if (heightMatch && surfaceDist < collisionRadius) {
-        // IMPROVED: Add debugging for collisions
-        console.log(`Projectile collision with ${obj.mesh?.name || 'object'}, distance: ${surfaceDist.toFixed(2)}, radius: ${collisionRadius.toFixed(2)}`);
-        // Calculate response direction (away from object along surface)
-        const responseDir = dir.clone().sub(
-          objDir.clone().multiplyScalar(dot)
-        ).normalize();
-        // Get current speed
-        const speed = projectile.velocity.length() * 0.3; // Reduce speed on collision
-        // Set new velocity direction
-        projectile.velocity = responseDir.multiplyScalar(speed);
-        // Move projectile outside collision radius
-        const correction = responseDir.clone().multiplyScalar(collisionRadius - surfaceDist + 0.05);
-        projectile.mesh.position.add(correction);
-        // Invoke collision callback if set
-        if (projectile.onCollideCallback) {
-          projectile.onCollideCallback(obj);
-        }
-        return true; // Collision handled
-      }
+      return false;
     }
-    return false; // No collision occurred
-  }
 
-  /**
-   * Helper method to visualize collision checks for debugging
-   */
-  _visualizeCollisionCheck(projectilePos, objectPos, distance, threshold, collided) {
-    // Only implement if THREE is available and we're in debug mode
-    if (typeof THREE === 'undefined' || !this.debug) return;
-
-    const color = collided ? 0xff0000 : 0x00ff00;
-    const lineGeo = new THREE.BufferGeometry().setFromPoints([
-      projectilePos.clone(),
-      objectPos.clone()
-    ]);
-    const lineMat = new THREE.LineBasicMaterial({ 
-      color: color,
-      transparent: true,
-      opacity: 0.6,
-    });
-    const line = new THREE.Line(lineGeo, lineMat);
+    // Get projectile info
+    const fromPos = projectile.lastPosition;
+    const toPos = projectile.position;
+    const projRadius = this.options.projectileRadius;
     
-    // Add to scene with auto-removal after 500ms
-    this.scene.add(line);
-    setTimeout(() => {
-      this.scene.remove(line);
-    }, 500);
+    // Calculate movement vector and distance
+    const moveVector = toPos.clone().sub(fromPos);
+    const moveDistance = moveVector.length();
+    
+    // If we barely moved, not worth checking detailed collisions
+    if (moveDistance < 0.01) return false;
+
+    // Enhanced tree collision detection
+    for (let i = 0; i < this.options.collidables.length; i++) {
+      const obj = this.options.collidables[i];
+      
+      // Skip invalid objects or planet
+      if (!obj.mesh || obj.isPlanet || obj.noCollision) continue;
+      
+      // Get object position
+      const objPos = obj.position || obj.mesh.position;
+      if (!objPos) continue;
+
+      // Special handling for trees
+      if (obj.mesh?.userData?.isTree || obj.mesh?.userData?.isPineTree) {
+        // For trees, we need to check the trunk as a cylinder
+        const trunkRadius = obj.trunkRadius || Math.max(0.7, obj.radius * 0.2);
+        const trunkHeight = obj.collisionHeight || obj.radius * 2;
+        const trunkDirection = obj.direction.clone();
+        
+        // Trunk base is at obj.position
+        const trunkBase = objPos.clone();
+        // Trunk top is position + direction * height
+        const trunkTop = objPos.clone().add(trunkDirection.clone().multiplyScalar(trunkHeight));
+        
+        // Check if projectile path intersects the trunk cylinder
+        if (this._checkLineCylinderIntersection(
+          fromPos, toPos,
+          trunkBase, trunkTop, 
+          trunkRadius + projRadius
+        )) {
+          if (this.debug) {
+            console.log(`Tree trunk collision detected with ${obj.mesh?.name || "Unknown tree"}!`);
+          }
+          
+          // Calculate approximate collision point (midway through intersection)
+          const collisionPoint = fromPos.clone().add(toPos).multiplyScalar(0.5);
+          
+          // Calculate collision normal (from trunk center to collision point)
+          // Project collision point onto trunk axis
+          const trunkVector = trunkTop.clone().sub(trunkBase);
+          const trunkLength = trunkVector.length();
+          const trunkDir = trunkVector.clone().normalize();
+          
+          // Calculate dot product to find projection along trunk
+          const pointToBase = collisionPoint.clone().sub(trunkBase);
+          const dotProduct = pointToBase.dot(trunkDir);
+          
+          // Clamp to trunk endpoints
+          const projection = Math.max(0, Math.min(trunkLength, dotProduct));
+          
+          // Get nearest point on trunk axis
+          const nearestPoint = trunkBase.clone().add(trunkDir.multiplyScalar(projection));
+          
+          // Normal is direction from nearest point on trunk to collision point
+          const normal = collisionPoint.clone().sub(nearestPoint).normalize();
+          
+          // Handle the collision
+          this._handleObjectCollision(projectile, obj, collisionPoint, normal);
+          return true;
+        }
+        
+        // Continue to next object if no intersection
+        continue;
+      }
+      
+      // For non-tree objects, use sphere collision as before
+      const objRadius = obj.radius || 2.0;
+      
+      // Skip if object is too far away (fast rejection test)
+      if (objPos.distanceTo(fromPos) > objRadius + projRadius + moveDistance) {
+        continue;
+      }
+      
+      // Check for collision with sphere along movement path
+      const CHECK_POINTS = 3; // Check multiple points along movement path
+      
+      for (let t = 0; t <= CHECK_POINTS; t++) {
+        // Calculate position at this point along path (0.0 to 1.0)
+        const checkPos = fromPos.clone().lerp(toPos, t / CHECK_POINTS);
+        
+        // Check distance to object
+        const distToObj = checkPos.distanceTo(objPos);
+        
+        // If distance is less than combined radii, we have a collision
+        if (distToObj <= (objRadius + projRadius)) {
+          if (this.debug) {
+            console.log(`Sphere collision detected with ${
+              obj.mesh?.name || "Unknown object"
+            }`);
+          }
+          
+          // Calculate collision normal (from object center to collision point)
+          const normal = checkPos.clone().sub(objPos).normalize();
+          
+          // Handle the collision
+          this._handleObjectCollision(projectile, obj, checkPos, normal);
+          return true;
+        }
+      }
+    }
+    
+    return false;
   }
 
   /**
-   * Get the current slingshot state
+   * Check if a line segment intersects a cylinder
+   * @param {THREE.Vector3} lineStart - Start of line segment
+   * @param {THREE.Vector3} lineEnd - End of line segment
+   * @param {THREE.Vector3} cylinderStart - Base center of cylinder
+   * @param {THREE.Vector3} cylinderEnd - Top center of cylinder
+   * @param {number} cylinderRadius - Radius of cylinder
+   * @returns {boolean} Whether line intersects cylinder
+   * @private
    */
-  getSlingshotState() {
-    return { ...this.slingshotState };
+  _checkLineCylinderIntersection(lineStart, lineEnd, cylinderStart, cylinderEnd, cylinderRadius) {
+    // Calculate cylinder axis
+    const cylinderAxis = cylinderEnd.clone().sub(cylinderStart).normalize();
+    
+    // Calculate line vector
+    const lineVector = lineEnd.clone().sub(lineStart);
+    const lineLength = lineVector.length();
+    const lineDir = lineVector.clone().normalize();
+    
+    // Points to check for closest approach
+    const numPoints = 5; // Check multiple points for better detection
+    
+    for (let i = 0; i <= numPoints; i++) {
+      // Get position along line
+      const t = i / numPoints;
+      const pointOnLine = lineStart.clone().add(lineDir.clone().multiplyScalar(t * lineLength));
+      
+      // Calculate vector from cylinder start to point
+      const pointToStart = pointOnLine.clone().sub(cylinderStart);
+      
+      // Project this vector onto cylinder axis to find distance along axis
+      const projectionAlongAxis = pointToStart.dot(cylinderAxis);
+      
+      // Clamp to cylinder length
+      const cylinderLength = cylinderEnd.distanceTo(cylinderStart);
+      const clampedProjection = Math.max(0, Math.min(cylinderLength, projectionAlongAxis));
+      
+      // Find nearest point on cylinder axis
+      const nearestAxisPoint = cylinderStart.clone().add(
+        cylinderAxis.clone().multiplyScalar(clampedProjection)
+      );
+      
+      // Calculate distance from point to axis
+      const distanceToAxis = pointOnLine.distanceTo(nearestAxisPoint);
+      
+      // Check if point is within cylinder radius
+      if (distanceToAxis <= cylinderRadius) {
+        return true;
+      }
+    }
+    
+    return false;
   }
-
+  
   /**
-   * Set a callback to be called when a particular projectile hits something
+   * Calculate closest point on a line segment to a point
+   * @param {THREE.Vector3} lineStart - Start of line 
+   * @param {THREE.Vector3} lineEnd - End of line
+   * @param {THREE.Vector3} point - Point to check distance from
+   * @returns {THREE.Vector3} Closest point on line segment
+   */
+  _closestPointOnLine(lineStart, lineEnd, point) {
+    const line = lineEnd.clone().sub(lineStart);
+    const lineLength = line.length();
+    
+    // Handle zero-length line
+    if (lineLength === 0) return lineStart.clone();
+    
+    const lineDirection = line.normalize();
+    const pointToLineStart = point.clone().sub(lineStart);
+    
+    // Calculate projection of point onto line
+    const projection = pointToLineStart.dot(lineDirection);
+    
+    // Clamp to line segment
+    const clampedProjection = Math.max(0, Math.min(lineLength, projection));
+    
+    // Calculate closest point
+    return lineStart.clone().add(lineDirection.multiplyScalar(clampedProjection));
+  }
+  
+  /**
+   * Handle collision with an object - ENHANCED VERSION
    * @param {Object} projectile - The projectile
-   * @param {Function} callback - Function to call on collision
+   * @param {Object} obj - The object hit
+   * @param {THREE.Vector3} collisionPoint - Point of collision
+   * @param {THREE.Vector3} normal - Surface normal at collision point
+   * @private
    */
-  onCollide(projectile, callback) {
-    if (projectile && typeof callback === 'function') {
-      projectile.onCollideCallback = callback;
+  _handleObjectCollision(projectile, obj, collisionPoint, normal) {
+    // Always create visual effect for collision to help verify it's working
+    this._createCollisionEffect(collisionPoint, projectile.type);
+    
+    // Get projectile speed for bounce calculation
+    const speed = projectile.velocity.length();
+    
+    // Add helpful debug info
+    console.log(`Collision with speed: ${speed.toFixed(2)}, max bounces: ${projectile.maxBounces}, current bounces: ${projectile.bounces}`);
+    
+    // Check if we should bounce
+    if (speed > this.options.minBounceSpeed && projectile.bounces < projectile.maxBounces) {
+      // Show bounce debug
+      console.log(`Bouncing projectile with factor: ${this.options.bounceFactor}`);
+      
+      // Apply bounce using the collision normal
+      projectile.velocity.reflect(normal);
+      
+      // Apply energy loss
+      projectile.velocity.multiplyScalar(this.options.bounceFactor);
+      
+      // Position slightly away from collision point to avoid re-collision
+      projectile.position.copy(collisionPoint.clone().addScaledVector(
+        normal, this.options.projectileRadius * 1.5
+      ));
+      
+      // Count bounce
+      projectile.bounces++;
+      
+      // Play bounce sound
+      if (window.game?.audio) {
+        // Select appropriate sound based on object
+        let sound = 'bounce';
+        
+        if (obj.mesh?.userData?.isTree || obj.mesh?.userData?.isPineTree) {
+          sound = 'woodBounce';
+        } else if (obj.mesh?.userData?.isRock) {
+          sound = 'rockBounce';
+        }
+        
+        window.game.audio.playSound(sound, 0.3);
+      }
+      
+      // Return false to keep the projectile active
+      return false;
+    }
+    
+    // No bounce, handle full collision
+    
+    // Play impact sound if available
+    if (window.game?.audio) {
+      const sound = obj.mesh?.userData?.isTree || obj.mesh?.userData?.isPineTree ? 
+        'woodImpact' : obj.mesh?.userData?.isRock ? 'rockImpact' : 'impact';
+      
+      window.game.audio.playSound(sound, 0.5);
+    }
+    
+    // Handle special collision effects
+    if (obj.mesh?.userData?.isTree || obj.mesh?.userData?.isPineTree) {
+      // For trees, maybe make apples fall
+      if (window.game?.appleSystem && Math.random() < 0.3) {
+        window.game.appleSystem.forceDropRandomApple();
+      }
+    } else if (obj.mesh?.userData?.isRock) {
+      // For rocks, create a spark effect
+      this._createSparkEffect(collisionPoint);
+    }
+    
+    // Return true to have the projectile removed
+    return true;
+  }
+  
+  /**
+   * Create spark effect for rock impacts
+   * @param {THREE.Vector3} position - Impact position
+   * @private
+   */
+  _createSparkEffect(position) {
+    // Only create if showCollisions is true
+    if (!this.options.showCollisions) return;
+    
+    // Create some tiny bright particles
+    const particleCount = 3;
+    
+    for (let i = 0; i < particleCount; i++) {
+      // Create tiny bright particle
+      const size = 0.2 + Math.random() * 0.2;
+      const geometry = new THREE.SphereGeometry(size, 4, 4);
+      const material = new THREE.MeshBasicMaterial({
+        color: 0xffffbb, // Bright yellow-white
+        transparent: true,
+        opacity: 0.9
+      });
+      
+      const particle = new THREE.Mesh(geometry, material);
+      particle.position.copy(position);
+      
+      // Add random velocity
+      const velocity = new THREE.Vector3(
+        (Math.random() - 0.5) * 2,
+        (Math.random() - 0.5) * 2,
+        (Math.random() - 0.5) * 2
+      ).normalize().multiplyScalar(2 + Math.random() * 3);
+      
+      // Add to scene
+      this.scene.add(particle);
+      
+      // Faster animation
+      const duration = 150 + Math.random() * 100;
+      
+      new TWEEN.Tween(material)
+        .to({ opacity: 0 }, duration)
+        .onComplete(() => {
+          this.scene.remove(particle);
+        })
+        .start();
+        
+      // Move particle
+      new TWEEN.Tween(particle.position)
+        .to({
+          x: particle.position.x + velocity.x,
+          y: particle.position.y + velocity.y,
+          z: particle.position.z + velocity.z
+        }, duration)
+        .start();
     }
   }
-
+  
   /**
-   * Clean up all projectiles
+  // Note: Tree collision handling was moved into _handleObjectCollision
+  /**
+   * Update projectile physics
+   * @param {Object} projectile - The projectile to update
+   * @param {number} deltaTime - Time since last update in seconds
+   * @private
+   */
+  _updateProjectilePhysics(projectile, deltaTime) {
+    // Get normalized direction for gravity (from sphere center to projectile)
+    this._vec3.copy(projectile.position).normalize();
+    
+    // Apply gravity in the direction toward sphere center
+    projectile.velocity.addScaledVector(
+      this._vec3.negate(), 
+      this.options.gravity * deltaTime * 60
+    );
+    
+    // Calculate new position
+    this._vec3.copy(projectile.velocity).multiplyScalar(deltaTime);
+    this._vec3b.copy(projectile.position).add(this._vec3);
+    
+    // Check for terrain collision
+    const terrainHeight = this.options.getTerrainHeight ? 
+                        this.options.getTerrainHeight(this._vec3b.clone().normalize()) : 
+                        0;
+                        
+    const groundRadius = this.options.sphereRadius + terrainHeight;
+    
+    // Check if new position is below ground level
+    if (this._vec3b.length() < groundRadius + this.options.projectileRadius) {
+      // Collision detected
+      this._handleCollision(projectile, groundRadius);
+    } else {
+      // No collision, update position
+      projectile.position.copy(this._vec3b);
+    }
+  }
+  
+  /**
+   * Handle projectile collision with terrain
+   * @param {Object} projectile - The projectile
+   * @param {number} groundRadius - The ground radius at collision point
+   * @private
+   */
+  _handleCollision(projectile, groundRadius) {
+    // Bounce if we haven't exceeded max bounces
+    if (projectile.bounces < projectile.maxBounces) {
+      // Calculate reflection
+      const normal = projectile.position.clone().normalize();
+      const speed = projectile.velocity.length();
+      
+      // Only bounce if speed is high enough
+      if (speed > this.options.minBounceSpeed) {
+        // Apply bounce
+        projectile.velocity.reflect(normal);
+        
+        // Apply energy loss
+        projectile.velocity.multiplyScalar(this.options.bounceFactor);
+        
+        // Position slightly above ground
+        projectile.position.copy(
+          normal.multiplyScalar(groundRadius + this.options.projectileRadius * 1.1)
+        );
+        
+        // Count bounce
+        projectile.bounces++;
+        
+        // Create bounce effect if enabled
+        if (this.options.showCollisions) {
+          this._createCollisionEffect(projectile.position, projectile.type);
+        }
+        
+        // Play bounce sound
+        if (window.game?.audio) {
+          window.game.audio.playSound('bounce', 0.3);
+        }
+      } else {
+        // Rest on ground
+        projectile.velocity.set(0, 0, 0);
+        
+        // Position at ground level
+        const normal = projectile.position.clone().normalize();
+        projectile.position.copy(
+          normal.multiplyScalar(groundRadius + this.options.projectileRadius * 0.7)
+        );
+        
+        // Align projectile to surface
+        if (projectile.mesh) {
+          const upVector = normal.clone();
+          const rotation = new THREE.Quaternion().setFromUnitVectors(
+            new THREE.Vector3(0, 1, 0),
+            upVector
+          );
+          projectile.mesh.quaternion.copy(rotation);
+        }
+      }
+    } else {
+      // Remove projectile after maximum bounces
+      const index = this.projectiles.indexOf(projectile);
+      if (index !== -1) {
+        this._removeProjectile(index);
+      }
+    }
+  }
+  
+  /**
+   * Remove a projectile by index
+   * @param {number} index - Index in the projectiles array
+   * @private
+   */
+  _removeProjectile(index) {
+    if (index < 0 || index >= this.projectiles.length) return;
+    
+    const projectile = this.projectiles[index];
+    
+    // Remove from scene
+    if (projectile.mesh) {
+      this.scene.remove(projectile.mesh);
+    }
+    
+    // Remove from array
+    this.projectiles.splice(index, 1);
+  }
+  
+  /**
+   * Clear all projectiles
    */
   clear() {
-    // Remove all projectiles
-    while (this.projectiles.length > 0) {
-      this.removeProjectile(this.projectiles[0]);
-    }
-  }
-
-  /**
-   * Check for continuous collision with terrain
-   * @param {Object} projectile - The projectile to check
-   * @param {THREE.Vector3} startPos - Start position
-   * @param {THREE.Vector3} moveDir - Movement direction
-   * @param {number} moveDistance - Distance of movement
-   * @param {number} sphereRadius - Planet radius
-   * @returns {boolean} - Whether collision occurred
-   */
-  _checkContinuousTerrainCollision(projectile, startPos, moveDir, moveDistance, sphereRadius) {
-    // Check collision with terrain along the movement path
-    // Use multiple samples along the path for better detection
-    const samples = 5;
-    const stepSize = moveDistance / samples;
-
-    for (let i = 1; i <= samples; i++) {
-      // Check at this sample point
-      const sampleDist = stepSize * i;
-      const samplePos = startPos.clone().add(moveDir.clone().multiplyScalar(sampleDist));
-      const sampleDir = samplePos.clone().normalize();
-
-      // Get terrain height at this point
-      const terrainHeight = this.options.getTerrainHeight(sampleDir);
-      const terrainRadius = sphereRadius + terrainHeight;
-
-      // Check if we're below terrain surface
-      if (samplePos.length() < terrainRadius + this.options.projectileRadius * 1.2) {
-        // Collision detected - handle it
-        projectile.hasCollided = true;
-
-        // Handle bounce behavior
-        const upDir = sampleDir.clone();
-        const verticalVel = projectile.velocity.dot(upDir);
-        // Only bounce if moving downward
-        if (verticalVel < 0) {
-          // Remove downward component
-          projectile.velocity.addScaledVector(upDir, -verticalVel * 1.6);
-          // Apply bounce physics
-          projectile.velocity.multiplyScalar(this.options.bounceFactor);
-          // Add slight randomization to bounces for natural feel
-          const randomDir = new THREE.Vector3(
-            (Math.random() - 0.5) * 0.3,
-            (Math.random() - 0.5) * 0.3,
-            (Math.random() - 0.5) * 0.3,
-          );
-          projectile.velocity.add(randomDir);
-          // Check if projectile is too slow after bounce
-          if (projectile.velocity.length() < this.options.minBounceSpeed) {
-            // Mark for removal on next update
-            projectile.shouldRemove = true;
-          }
-          // Move above ground to prevent sticking
-          // Position at surface + safe distance
-          projectile.mesh.position.copy(
-            sampleDir.multiplyScalar(terrainRadius + this.options.projectileRadius * 1.5)
-          );
-        }
-        return true; // Collision occurred
+    // Remove all projectiles from scene and tracking
+    this.projectiles.forEach(projectile => {
+      if (projectile.mesh) {
+        this.scene.remove(projectile.mesh);
       }
-    }
-    // Reset collision state if we're above terrain
-    projectile.hasCollided = false;
-    return false; // No collision
-  }
-
-  /**
-   * Perform continuous collision detection with objects
-   * @param {Object} projectile - The projectile to check
-   * @param {THREE.Vector3} startPos - Start position
-   * @param {THREE.Vector3} moveDir - Movement direction
-   * @param {number} moveDistance - Distance of movement
-   * @param {number} paddingFactor - Extra collision padding factor
-   * @returns {Object|null} - Collision information or null if no collision
-   */
-  _checkContinuousObjectCollisions(projectile, startPos, moveDir, moveDistance, paddingFactor = 1.0) {
-    if (!this.options.collidables || this.options.collidables.length < 2) return null;
-
-    // CRITICAL FIX: Increase default padding factor for all collision checks
-    paddingFactor = paddingFactor * 1.5; // Apply a global 50% padding increase
-
-    const projectileRadius = this.options.projectileRadius;
+    });
     
-    // Calculate the projectile's height above surface at start position
-    const projectileHeight = startPos.length() - this.options.sphereRadius;
+    this.projectiles = [];
+  }
+  
+  /**
+   * Set collision display mode
+   * @param {boolean} show - Whether to show collision effects
+   */
+  setCollisionDisplay(show) {
+    this.options.showCollisions = show;
+    return this.options.showCollisions;
+  }
 
-    // Tracking for closest collision
-    let closestCollision = null;
-    let closestDistance = Infinity;
+  /**
+   * Helper method to estimate distance from point to line segment
+   * @param {THREE.Vector3} point - Point to check distance from
+   * @param {THREE.Vector3} lineStart - Start of line
+   * @param {THREE.Vector3} lineEnd - End of line
+   * @returns {number} Approximate distance from point to line segment
+   * @private
+   */
+  _getApproxDistanceToSegment(point, lineStart, lineEnd) {
+    // This is an approximation that is fast but may overestimate
+    const lineDir = lineEnd.clone().sub(lineStart).normalize();
+    const pointToStart = point.clone().sub(lineStart);
+    
+    // Project pointToStart onto lineDir
+    const projLength = pointToStart.dot(lineDir);
+    
+    // Clamp to segment
+    const clampedProj = Math.max(0, Math.min(projLength, lineEnd.distanceTo(lineStart)));
+    
+    // Find closest point on line
+    const closest = lineStart.clone().addScaledVector(lineDir, clampedProj);
+    
+    // Return distance to closest point
+    return point.distanceTo(closest);
+  }
 
-    // Check collision with all objects except the planet
-    for (let i = 1; i < this.options.collidables.length; i++) {
-      const obj = this.options.collidables[i];
-
-      // Skip non-collidable objects
-      if (!obj.position || !obj.direction || obj.noCollision) continue;
-
-      // Get object properties
-      const objPos = obj.position;
-      const objDir = obj.direction;
-
-      // CRITICAL FIX: Special handling for trees - they need extra attention
-      const isTree = obj.mesh?.userData?.isTree || obj.mesh?.userData?.isPineTree;
-      const isRock = obj.mesh?.userData?.isRock || obj.mesh?.name?.includes('Rock');
-
-      // Skip objects that are clearly far away - use a loose check
-      const roughDistance = startPos.distanceTo(objPos);
-      const maxCheck = isTree ? 50.0 : 30.0; // Give trees a wider collision check range
-      if (roughDistance > maxCheck + moveDistance) continue;
-
-      // For trees, use a completely different collision model
-      if (isTree) {
-        // NEW APPROACH: Model tree trunk as a cylinder instead of checking heights
-        const trunkRadius = obj.trunkRadius || Math.min(obj.radius * 0.2, 0.6);
-        const trunkHeight = obj.collisionHeight || obj.radius * 3;
-        // Get object height from planet surface
-        const objHeight = objPos.length() - this.options.sphereRadius;
-        // Get vector from object base to projectile (in world space)
-        const objToProjectile = startPos.clone().sub(objPos);
-        // Project this vector onto trunk direction (up) to get height above trunk base
-        const heightAlongTrunk = objToProjectile.dot(objDir);
-        // Skip if projectile is clearly outside trunk height range
-        if (heightAlongTrunk < 0 || heightAlongTrunk > trunkHeight + projectileRadius) {
-          continue;
-        }
-        // Get closest distance to trunk center line
-        // First get the point on the trunk center line at the same height as projectile
-        const pointOnTrunkAxis = objPos.clone().add(
-          objDir.clone().multiplyScalar(heightAlongTrunk)
-        );
-        // Calculate distance from projectile to this point (perpendicular to trunk)
-        const distToTrunkAxis = startPos.distanceTo(pointOnTrunkAxis);
-        // CRITICAL FIX: Apply a much more generous trunk collision model
-        const effectiveRadius = trunkRadius * 1.8; // Reduced from 2.5 to make collision closer to trunk surface
-        // Check if we're within collision distance of the trunk
-        if (distToTrunkAxis < effectiveRadius + projectileRadius) {
-          // This is a hit! Calculate collision details
-          // Project movement vector onto plane perpendicular to trunk axis
-          const moveInTrunkSpace = moveDir.clone().sub(
-            objDir.clone().multiplyScalar(moveDir.dot(objDir))
-          ).normalize();
-          // Calculate where along the ray the collision might occur
-          const distToCollision = Math.max(0, (effectiveRadius + projectileRadius - distToTrunkAxis));
-          const collisionDistance = distToCollision / Math.abs(moveInTrunkSpace.dot(
-            startPos.clone().sub(pointOnTrunkAxis).normalize()
-          ));
-          // Only count collisions along our movement path and find the closest one
-          if (collisionDistance <= moveDistance && collisionDistance < closestDistance) {
-            closestDistance = collisionDistance;
-            closestCollision = {
-              object: obj,
-              distance: collisionDistance,
-              collisionRadius: effectiveRadius,
-              hitPoint: startPos.clone().add(moveDir.clone().multiplyScalar(collisionDistance)),
-              isTree: true,
-              isTrunk: true
-            };
-          }
-        }
-      } else {
-        // Non-tree object collision (simpler model)
-        let collisionRadius = projectileRadius;
-        if (isRock) {
-          // Precise rock collision
-          collisionRadius += obj.radius * 0.8;
-        } else {
-          // General object collision
-          collisionRadius += obj.radius || 1.0;
-        }
-
-        // Calculate ray-sphere intersection
-        const objToStart = objPos.clone().sub(startPos);
-        const projection = moveDir.clone().multiplyScalar(objToStart.dot(moveDir));
-        const closestPoint = startPos.clone().add(projection);
-        // Calculate closest approach distance
-        const closestApproach = closestPoint.distanceTo(objPos);
-        // Apply collision padding
-        const paddedRadius = collisionRadius * paddingFactor;
-        // Check if we're within collision distance
-        if (closestApproach < paddedRadius) {
-          // Calculate how far along the ray the collision occurs
-          const distanceToClosestPoint = startPos.distanceTo(closestPoint);
-          // Only use collisions along our actual path (not behind us)
-          if (distanceToClosestPoint <= moveDistance && 
-              distanceToClosestPoint < closestDistance) {
-            closestDistance = distanceToClosestPoint;
-            closestCollision = {
-              object: obj,
-              distance: distanceToClosestPoint,
-              collisionRadius: collisionRadius,
-              hitPoint: closestPoint,
-              isRock: isRock,
-            };
-          }
-        }
-      }
-    }
-
-    // If we found a collision, handle it with extra bounce
-    if (closestCollision) {
-      // Move to collision point minus a small safety margin
-      const collisionPos = startPos.clone().add(
-        moveDir.multiplyScalar(closestCollision.distance * 0.95)
-      );
-      projectile.mesh.position.copy(collisionPos);
-
-      // IMPROVED BOUNCE PHYSICS FOR ALL COLLISIONS
-      const collisionObj = closestCollision.object;
-      const objDir = collisionObj.direction;
-      const dir = collisionPos.clone().normalize();
-      const dot = dir.dot(objDir);
-
-      // TURBO-CHARGED BOUNCE: Much better bounce physics with "juice" factor
-      let responseDir;
-      if (closestCollision.isTrunk) {
-        // Get vector from trunk axis to collision point (perpendicular to trunk)
-        const pointOnTrunkAxis = collisionObj.position.clone().add(
-          objDir.clone().multiplyScalar(
-            (collisionPos.clone().sub(collisionObj.position)).dot(objDir)
-          )
-        );
-        // This is the actual normal vector for the collision
-        const trunkNormal = collisionPos.clone().sub(pointOnTrunkAxis).normalize();
-        // Calculate reflection direction based on incoming vector and normal
-        const incomingDir = moveDir.clone().negate();
-        responseDir = incomingDir.clone().sub(
-          trunkNormal.clone().multiplyScalar(2 * incomingDir.dot(trunkNormal))
-        ).normalize();
-        // Add slight vertical component for more satisfying bounce
-        responseDir.addScaledVector(objDir, 0.3); // Reduced from 0.4 for flatter bounces
-        responseDir.normalize();
-        // SNAPPY: Give the response direction a bit of "snap" with impulse
-        const snapFactor = 1.25; // 25% extra "snap" when bouncing
-        responseDir.multiplyScalar(snapFactor);
-      } else {
-        // Standard bounce direction for other objects, but with "snap"
-        responseDir = dir.clone().sub(
-          objDir.clone().multiplyScalar(dot)
-        ).normalize().multiplyScalar(1.2); // 20% extra "snap"
-      }
-
-      // TURBO: Get current speed and apply bouncier physics
-      const currentSpeed = projectile.velocity.length();
-      // JUICY: Much higher energy conservation in bounces
-      // Use 55% of original speed for trunk collisions (up from 40%)
-      // And 45% for other objects (up from 35%)
-      const speed = currentSpeed * (closestCollision.isTrunk ? 0.55 : 0.45);
-      // Apply the new velocity with proper direction and speed
-      projectile.velocity = responseDir.multiplyScalar(speed);
-
-      // DYNAMIC: Scale random bounce variation based on impact speed
-      // Faster impacts get more variation for dynamic feel
-      const randomFactor = Math.min(0.2, 0.1 + (currentSpeed / 200)); // Cap at 0.2
-      // Add slight random bounce variation (proportional to impact speed)
-      const randomBounce = new THREE.Vector3(
-        (Math.random() - 0.5) * randomFactor,
-        (Math.random() - 0.5) * randomFactor,
-        (Math.random() - 0.5) * randomFactor,
-      ).multiplyScalar(closestCollision.isTrunk ? 0.25 : 0.15);
-      projectile.velocity.add(randomBounce);
+  /**
+   * Create visual effect for collision
+   * @param {THREE.Vector3} position - Collision position
+   * @param {string} type - Projectile type
+   * @private
+   */
+  _createCollisionEffect(position, type) {
+    // Use minimal particles for performance
+    const particleCount = this.options.splashParticleCount;
+    const color = type === 'goldenApple' ? 0xffdd00 : 0xff2200;
+    
+    // Create particles
+    for (let i = 0; i < particleCount; i++) {
+      // Create particle
+      const size = 0.4 + Math.random() * 0.4;
+      const geometry = new THREE.SphereGeometry(size, 6, 6);
+      const material = new THREE.MeshBasicMaterial({
+        color: color,
+        transparent: true,
+        opacity: 0.8
+      });
       
-      // Only remove slowest projectiles
-      if (projectile.velocity.length() < this.options.minBounceSpeed * 0.2) {
-        // Mark for removal but with a delay to show the bounce first
-        if (!projectile.removeTime) {
-          projectile.removeTime = Date.now() + 500; // Remove after 500ms (down from 800ms)
-        }
-      }
-
-      // VISUAL FEEDBACK: Add "impact squash" for a frame to enhance bounce feel
-      // Temporarily scale the projectile on impact for visual feedback
-      const originalScale = projectile.mesh.scale.clone();
-      // Impact direction determines the squash axis
-      const impactAxis = projectile.velocity.clone().normalize();
-      // Squash along impact direction, stretch perpendicular
-      const squashAmount = Math.min(0.7, 0.4 + (currentSpeed / 120)); // More squash for faster impacts
-      projectile.mesh.scale.set(1 + squashAmount, 1 - squashAmount, 1 + squashAmount);
-      // Restore original scale after a short delay
-      setTimeout(() => {
-        if (projectile.mesh && projectile.mesh.parent) {
-          new TWEEN.Tween(projectile.mesh.scale)
-            .to({ x: originalScale.x, y: originalScale.y, z: originalScale.z }, 150)
-            .easing(TWEEN.Easing.Elastic.Out)
-            .start();
-        }
-      }, 50);
-
-      // Invoke callback if set
-      if (projectile.onCollideCallback) {
-        projectile.onCollideCallback(collisionObj);
-      }
-
-      // Visually confirm collision with a debug marker if debugging is enabled
-      if (this.debug && typeof THREE !== 'undefined') {
-        const markerSize = 0.3;
-        const markerGeo = new THREE.SphereGeometry(markerSize, 8, 6);
-        const markerMat = new THREE.MeshBasicMaterial({ 
-          color: closestCollision.isTrunk ? 0xff0000 : 0xff8800,
-          transparent: true,
-          opacity: 0.8
-        });
-        const marker = new THREE.Mesh(markerGeo, markerMat);
-        marker.position.copy(collisionPos);
-        this.scene.add(marker);
-        // Remove after 2 seconds
-        setTimeout(() => {
-          this.scene.remove(marker);
-        }, 2000);
-      }
+      const particle = new THREE.Mesh(geometry, material);
+      particle.position.copy(position);
       
-      return closestCollision;
+      // Add random velocity
+      const velocity = new THREE.Vector3(
+        (Math.random() - 0.5) * 2,
+        Math.random() * 2, // Mostly upward
+        (Math.random() - 0.5) * 2
+      ).multiplyScalar(2 + Math.random() * 3);
+      
+      // Add to scene
+      this.scene.add(particle);
+      
+      // Animate particles
+      const duration = 300 + Math.random() * 200;
+      
+      new TWEEN.Tween(material)
+        .to({ opacity: 0 }, duration)
+        .onComplete(() => {
+          this.scene.remove(particle);
+          geometry.dispose();
+          material.dispose();
+        })
+        .start();
+        
+      // Move particle
+      new TWEEN.Tween(particle.position)
+        .to({
+          x: particle.position.x + velocity.x,
+          y: particle.position.y + velocity.y,
+          z: particle.position.z + velocity.z
+        }, duration)
+        .start();
     }
-
-    return null; // No collision
+  }
+  
+  /**
+   * Enable debug logging
+   * @param {boolean} enabled - Whether to enable debugging
+   */
+  enableDebug(enabled = true) {
+    this.debug = enabled;
+    console.log(`Projectile collision debug ${enabled ? 'enabled' : 'disabled'}`);
   }
 }
