@@ -113,6 +113,9 @@ export default class SphereControls {
     this.maxGravityMultiplier = options.maxGravityMultiplier || 2.5; // How much stronger gravity gets
     this.gravityRampTime = options.gravityRampTime || 0.8; // Time to reach max gravity (seconds)
     this.airTime = 0; // Time spent in air for gravity calculations
+
+    // Add this variable to track the last time a ground state change happened
+    this._lastGroundStateChangeTime = 0;
   }
 
   getObject() {
@@ -801,5 +804,88 @@ export default class SphereControls {
       jumpAirTime: this.jumpAirTime,
       lastVelocity: this.velocity.length()
     });
+  }
+
+  // Add some dampening to reduce the constant ground contact lost/regained messages
+  // Look for the onGround state change code around line 600-650
+
+  /**
+   * Check for collisions with terrain
+   * @private
+   */
+  _checkTerrainCollision() {
+    // Get current position and up vector
+    const position = this.object.position;
+    const upVector = position.clone().normalize();
+    
+    // Calculate ground elevation at current position
+    const sphereRadius = this.options.sphereRadius;
+    const terrainHeight = this.options.getTerrainHeight(position.clone().normalize());
+    const groundRadius = sphereRadius + terrainHeight;
+    
+    // Calculate player height above ground
+    const distanceFromCenter = position.length();
+    const heightAboveGround = distanceFromCenter - groundRadius - this._groundMargin;
+    
+    // Add dampening to avoid oscillating ground contact messages
+    const wasOnGround = this.onGround;
+    
+    // NEW: Add hysteresis to ground detection to prevent rapid state changes
+    const groundMarginWithHysteresis = wasOnGround ? 
+      this._groundMargin + 0.2 : // Add a small buffer when already on ground
+      this._groundMargin;        // Use normal margin when not on ground
+
+    // UPDATED: Only update onGround state if the change is significant
+    const isNowOnGround = heightAboveGround <= groundMarginWithHysteresis;
+    
+    // Only log a message if the state actually changed and not too frequently
+    if (isNowOnGround !== this.onGround) {
+      const now = Date.now();
+      if (now - this._lastGroundStateChangeTime > 500) { // Limit messages to 500ms intervals
+        this._lastGroundStateChangeTime = now;
+        if (isNowOnGround) {
+          console.log('Ground contact detected - landing');
+        } else {
+          console.log('Lost ground contact - falling');
+        }
+      }
+      
+      // Update the onGround state
+      this.onGround = isNowOnGround;
+      
+      // Reset jump state when landing
+      if (isNowOnGround && !wasOnGround) {
+        this.isJumping = false;
+        this.jumpStartTime = 0;
+        this.jumpsRemaining = this.options.maxJumps;
+        
+        // If we landed with a significant downward velocity, apply landing effects
+        const downComponent = this.velocity.dot(upVector.clone().negate());
+        if (downComponent > 3.0) {
+          this._applyLandingEffects(downComponent);
+        }
+      }
+    }
+    
+    // Adjust position if we're below the ground
+    if (distanceFromCenter < groundRadius + this._groundMargin) {
+      // Calculate new position on surface
+      const newPosition = upVector.multiplyScalar(groundRadius + this._groundMargin);
+      this.object.position.copy(newPosition);
+      
+      // Project velocity along the surface plane
+      const normalComponent = this.velocity.dot(upVector);
+      if (normalComponent < 0) {
+        // Remove the component pointing into the ground
+        this.velocity.sub(upVector.multiplyScalar(normalComponent));
+        
+        // Apply friction to slow down sliding
+        const speedAlongSurface = this.velocity.length();
+        if (speedAlongSurface > 0.01) {
+          const friction = Math.min(this.friction * this.delta * 60, 1.0);
+          this.velocity.multiplyScalar(1.0 - friction);
+        }
+      }
+    }
   }
 }

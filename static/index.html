@@ -1,0 +1,88 @@
+<!-- Add a tip about the console commands to the main page -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>5D Sphere Explorer</title>
+  <link rel="stylesheet" href="/static/css/main.css">
+</head>
+<body>
+  <canvas id="c"></canvas>
+  
+  <div id="loading-screen">
+    <div class="loading-content">
+      <h1>5D Sphere Explorer</h1>
+      <div class="loading-bar-container">
+        <div class="loading-bar"></div>
+      </div>
+      <p class="loading-text">Loading, please wait...</p>
+    </div>
+  </div>
+  
+  <div id="help-overlay">
+    <div class="help-content">
+      <h2>Controls</h2>
+      <ul>
+        <li>WASD - Move</li>
+        <li>Mouse - Look around</li>
+        <li>Space - Jump</li>
+        <li>Q - Switch weapon</li>
+        <li>Left Mouse - Fire weapon</li>
+      </ul>
+      <p><strong>Console Commands:</strong></p>
+      <ul>
+        <li>give30Apples() - Get 30 apples immediately</li>
+        <li>toggleFPS() - Show performance stats</li>
+      </ul>
+      <button id="close-help">Got it!</button>
+    </div>
+  </div>
+  
+  <div id="controls">
+    <button id="help-button">Help</button>
+    <button id="fullscreen-button">Fullscreen</button>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.152.2/build/three.module.js"
+      }
+    }
+  </script>
+  <script type="module" src="/static/js/main.js"></script>
+  
+  <script>
+    // Hide loading screen when content loaded
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        const loadingScreen = document.getElementById('loading-screen');
+        loadingScreen.style.opacity = '0';
+        setTimeout(() => {
+          loadingScreen.style.display = 'none';
+        }, 500);
+      }, 1000); // Show for at least 1 second
+      
+      // Toggle help overlay
+      document.getElementById('help-button').addEventListener('click', () => {
+        document.getElementById('help-overlay').style.display = 'flex';
+      });
+      
+      document.getElementById('close-help').addEventListener('click', () => {
+        document.getElementById('help-overlay').style.display = 'none';
+      });
+      
+      // Fullscreen button
+      document.getElementById('fullscreen-button').addEventListener('click', () => {
+        if (!document.fullscreenElement) {
+          document.documentElement.requestFullscreen();
+        } else {
+          document.exitFullscreen();
+        }
+      });
+    });
+  </script>
+</body>
+</html>

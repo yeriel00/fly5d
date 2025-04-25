@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import SphereControls from './SphereControls.js';
 import OrientationHelper from './OrientationHelper.js';
 import WeaponSystem from './WeaponSystem.js';
+import TreeJumpEnhancer from './TreeJumpEnhancer.js';  // Add import for TreeJumpEnhancer
 
 /**
  * Player class that manages the first-person character
@@ -28,7 +29,7 @@ export default class Player {
       playerRadius: 2.0,
       playerColor: 0x0000FF, // Blue
       debugMode: false,
-      terrainConformFactor: 0.9, // How strongly camera conforms to terrain (0-1)
+      terrainConformFactor: 0.9, // How strongly camera conforms to terrain (0-1),
     }, options);
 
     // Initialize components
@@ -43,24 +44,22 @@ export default class Player {
       this._createDebugBody();
     }
 
-    // Initialize weapon system
-    this.weaponSystem = new WeaponSystem(scene, this.camera, {
-      sphereRadius: this.options.sphereRadius,
-      gravity: this.options.gravity * 0.75, // Use slightly less gravity for projectiles
-      projectileSpeed: 160, // INCREASED: Quadrupled from 40 to 160 for much faster projectiles
-      projectileRadius: 0.8,
-      getTerrainHeight: this.options.getTerrainHeight,
-      collidables: this.options.collidables
+    // Use this new method instead of inline code
+    this._initWeaponSystem();
+    
+    // Initialize tree jump enhancer
+    this.treeJumpEnhancer = new TreeJumpEnhancer({
+      maxBoostTime: 0.3,
+      boostMultiplier: 1.6,  
+      treeCollisionRadius: 5.0,
+      debugMode: this.options.debugMode,
     });
     
-    // Set up weapon models
-    // FIXED: Remove the call to setupModel which doesn't exist
-    // this.weaponSystem.setupModel(this.camera);
-    
-    // Weapon input state
-    this.weaponInput = {
-      firing: false,
-      weaponSwitchTimer: 0
+    // Tree jump state
+    this.treeJumpState = {
+      boostedJump: false,
+      nearTree: false,
+      boostAvailable: false
     };
   }
 
@@ -135,6 +134,30 @@ export default class Player {
   }
 
   /**
+   * Initialize the weapon system
+   * @private
+   */
+  _initWeaponSystem() {
+    this.weaponSystem = new WeaponSystem(this.scene, this.camera, {
+      sphereRadius: this.options.sphereRadius,
+      gravity: this.options.gravity * 0.75, // Use slightly less gravity for projectiles
+      projectileSpeed: 160, // INCREASED: Quadrupled from 40 to 160 for much faster projectiles
+      projectileRadius: 0.8,
+      getTerrainHeight: this.options.getTerrainHeight,
+      collidables: this.options.collidables
+    });
+    
+    // Add this line to set up the weapon model
+    this.weaponSystem.setupModel(this.camera);
+    
+    // Weapon input state
+    this.weaponInput = {
+      firing: false,
+      weaponSwitchTimer: 0
+    };
+  }
+
+  /**
    * Update player (call this every frame)
    * @param {number} delta - Time since last update
    */
@@ -164,10 +187,33 @@ export default class Player {
     // Update the weapon system - pass player position
     this.weaponSystem.update(delta, this.playerObject.position);
     
+    // Update tree jump enhancer
+    const currentTime = Date.now() / 1000;
+    const trees = this.options.collidables?.filter(obj => 
+      obj.mesh?.userData?.isTree || obj.mesh?.userData?.isPineTree
+    );
+    
+    this.treeJumpEnhancer.update(
+      delta,
+      currentTime,
+      this.playerObject.position,
+      this.controls.isJumping,
+      this.controls.onGround,
+      trees,
+      this.options.debugMode ? this.scene : null
+    );
+    
+    // Update tree jump state
+    this.treeJumpState.nearTree = this.treeJumpEnhancer.isNearTree(this.playerObject.position);
+    this.treeJumpState.boostAvailable = this.treeJumpEnhancer.canBoost();
+    
     // Update weapon switch timer
     if (this.weaponInput.weaponSwitchTimer > 0) {
       this.weaponInput.weaponSwitchTimer -= delta;
     }
+    
+    // Update UI indicators if near tree or boost available
+    this._updateTreeJumpIndicators();
   }
 
   /**
@@ -204,6 +250,41 @@ export default class Player {
    * Force player to jump
    */
   makeJump() {
+    // Check if we can perform a tree boost jump
+    if (this.controls && this.controls.jumpsRemaining < this.controls.maxJumps) {
+      const facingDirection = new THREE.Vector3();
+      this.camera.getWorldDirection(facingDirection);
+      
+      // Try to perform a boosted jump off a tree
+      const boosted = this.treeJumpEnhancer.tryBoost(facingDirection, (direction, multiplier) => {
+        // Get current jump strength
+        const jumpStrength = this.controls.jumpStrength * multiplier;
+        
+        // Apply directional boost
+        direction.normalize().multiplyScalar(jumpStrength);
+        this.controls.velocity.add(direction);
+        
+        // Set jumping state
+        this.controls.isJumping = true;
+        this.controls.onGround = false;
+        
+        // Extra feedback
+        this.treeJumpState.boostedJump = true;
+        setTimeout(() => {
+          this.treeJumpState.boostedJump = false;
+        }, 500);
+        
+        // Play special jump sfx
+        this._playBoostSound();
+      });
+      
+      if (boosted) {
+        console.log("Performed tree boost jump!");
+        return true;
+      }
+    }
+    
+    // Fall back to regular jump if boost wasn't performed
     // apply upward + forward impulse for directional jump
     const forward = new THREE.Vector3();
     this.camera.getWorldDirection(forward);
@@ -214,6 +295,49 @@ export default class Player {
     this.controls.velocity.add(forward);
     this.controls.isJumping = true;
     this.controls.onGround = false;
+    
+    return true;
+  }
+
+  /**
+   * Update visual indicators for tree jumps
+   * @private
+   */
+  _updateTreeJumpIndicators() {
+    // This could be extended to add HUD indicators
+    if (this.treeJumpState.boostAvailable) {
+      if (window.game && window.game.ui) {
+        window.game.ui.showBoostIndicator(true);
+      }
+    } else if (this.treeJumpState.nearTree) {
+      if (window.game && window.game.ui) {
+        window.game.ui.showTreeProximityIndicator(true);
+      }
+    } else {
+      if (window.game && window.game.ui) {
+        window.game.ui.showBoostIndicator(false);
+        window.game.ui.showTreeProximityIndicator(false);
+      }
+    }
+  }
+
+  /**
+   * Play sound effect for boost jumping
+   * @private
+   */
+  _playBoostSound() {
+    // This would connect to an audio system
+    if (window.game && window.game.audio) {
+      window.game.audio.playSound('jumpBoost', 0.7);
+    }
+  }
+
+  /**
+   * Get information about tree jump state
+   * @returns {Object} Tree jump state
+   */
+  getTreeJumpState() {
+    return { ...this.treeJumpState };
   }
 
   /**
@@ -280,8 +404,8 @@ export default class Player {
     
     console.log("Player#releaseWeapon called"); // Debug logging
     
-    // FIXED: Changed releaseCharge to releaseShot to match WeaponSystem
-    const result = this.weaponSystem.releaseShot(this.playerObject.position);
+    // FIXED: Changed releaseShot to fireProjectile to match WeaponSystem implementation
+    const result = this.weaponSystem.fireProjectile();
     return result;
   }
 
@@ -319,7 +443,31 @@ export default class Player {
    * Get the weapon state
    */
   getWeaponState() {
-    return this.weaponSystem.getState();
+    // If the weaponSystem doesn't exist or isn't initialized yet
+    if (!this.weaponSystem) {
+        return {
+            currentWeapon: 'none',
+            isCharging: false,
+            chargeState: null,
+            ammo: { apple: 0, goldenApple: 0 }
+        };
+    }
+    
+    // FIXED: Use the proper method name (getWeaponState instead of getState)
+    // Check if the method exists first for better error handling
+    if (typeof this.weaponSystem.getWeaponState === 'function') {
+        return this.weaponSystem.getWeaponState();
+    } else {
+        console.warn("WeaponSystem missing getWeaponState method");
+        
+        // Fallback: create a basic state object with what we can access directly
+        return {
+            currentWeapon: this.weaponSystem.currentWeapon || 'slingshot',
+            isCharging: this.weaponSystem.isCharging || false,
+            chargeState: this.weaponSystem.chargeState || null,
+            ammo: this.weaponSystem.ammo || { apple: 0, goldenApple: 0 }
+        };
+    }
   }
 
   /**

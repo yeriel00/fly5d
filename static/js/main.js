@@ -12,7 +12,11 @@ import LowPolyGenerator from './low_poly_generator.js';
 import Player from './player.js';
 // Import TWEEN.js for smooth animations
 import TWEEN from '/static/js/libs/tween.esm.js';
-import Crosshair from './ui/crosshair.js';
+// Add import at the top with other imports
+import FPSMonitor from './fps_monitor.js';
+import AppleSystem from './AppleSystem.js'; // Add this import
+// Add CrosshairSystem import
+import CrosshairSystem from './CrosshairSystem.js';
 
 // --- Constants ---
 const R = 400; // INCREASED radius from 300 to 400 for more spacious feel
@@ -457,6 +461,14 @@ debug("Building world...");
 
 let waterEffect = null;
 
+// Create FPS monitor early in the script
+const fpsMonitor = new FPSMonitor({
+  showDisplay: true,
+  warningThreshold: 40,
+  criticalThreshold: 25,
+  autoOptimize: true
+});
+
 // Initialize player after world is built
 initEnvironment(scene, 'medium', worldConfig, (placerFunc) => {
   placeOnSphereFunc = placerFunc;
@@ -472,12 +484,64 @@ initEnvironment(scene, 'medium', worldConfig, (placerFunc) => {
     gravity: physics.gravity,
     maxJumps: physics.maxJumps
   });
+
+  // Give player some initial ammo after creation
+  if (player && player.addAmmo) {
+    player.addAmmo('apple', 10); // Start with 10 apples
+    console.log("Initial ammo provided: 10 apples");
+  }
+
+  // CRITICAL FIX: Make sure we set collidables directly and consistently
+  if (player?.weaponSystem?.projectileSystem) {
+    console.log(`Setting up projectile collisions with ${collidables.length} objects`);
+    player.weaponSystem.projectileSystem.options.collidables = collidables;
+    
+    // Enable collision effects
+    player.weaponSystem.projectileSystem.options.showCollisions = true;
+    player.weaponSystem.projectileSystem.options.splashParticleCount = 5;
+  }
   
   //  Initialize FX Manager AFTER player is created, using player's camera
   fxManager = new FXManager(scene, player.getCamera(), renderer);
   
   // Initialize player UI including weapon controls
   initializePlayerUI();
+  
+  // Register apple system optimizer AFTER fpsMonitor is created
+  fpsMonitor.registerOptimizer((level) => {
+    if (level === 1) {
+      // First level optimization
+      if (window.applePerformance) window.applePerformance.low();
+      
+      // Reduce max apples
+      if (appleSystem) appleSystem.options.maxApplesPerTree = 3;
+      
+    } else if (level === 2) {
+      // Second level optimization - drastic measures
+      if (appleSystem) {
+        appleSystem.options.maxApplesPerTree = 2;
+        appleSystem.options.growthProbability *= 0.5;
+        appleSystem.options.fallProbability *= 0.5;
+      }
+      
+    } else if (level >= 3) {
+      // Critical optimization - clear most apples
+      if (window.applePerformance) window.applePerformance.clearAll();
+    }
+  });
+  
+  // Add crosshair system initialization - ADD THIS AFTER PLAYER CREATION
+  const crosshairSystem = new CrosshairSystem({
+    color: 'rgba(255, 255, 255, 0.8)',
+    size: 14,
+    thickness: 1.5,
+    dotSize: 2,
+    gap: 5,
+    chargeIndicator: true
+  });
+  
+  // Make crosshair and charge indicator available globally for other systems
+  window.crosshairSystem = crosshairSystem;
   
   // Start animation loop after player is created
   animate();
@@ -497,15 +561,45 @@ initEnvironment(scene, 'medium', worldConfig, (placerFunc) => {
 onWindowResize();
 
 // --- Animation Loop ---
-function animate() {
+function animate(timestamp) {
   const delta = clock.getDelta();
-
-  // Update TWEEN animations
-  TWEEN.update();
-
+  
+  // Update FPS monitor at the start of each frame
+  // Make sure timestamp is provided and handle any potential errors
+  try {
+    if (fpsMonitor && typeof fpsMonitor.update === 'function') {
+      fpsMonitor.update(timestamp);
+    }
+  } catch (e) {
+    console.warn("Error updating FPS monitor:", e);
+  }
+  
+  // FIXED: Call update on the TWEEN object imported correctly
+  if (TWEEN) {
+    // Get FPS safely, with a fallback value
+    const fps = (fpsMonitor && typeof fpsMonitor.getFPS === 'function') ? 
+                fpsMonitor.getFPS() : 60;
+    
+    if (fps > 40 || Math.random() < 0.2) { // Only update TWEEN 20% of the time if FPS is low
+      TWEEN.update();
+    }
+  } else {
+    console.warn("TWEEN library not properly loaded");
+  }
+  
   // Update player
   if (player) {
     player.update(delta);
+    
+    // Update crosshair charge indicator if weapon is charging
+    if (window.crosshairSystem && player.weaponSystem) {
+      const weaponState = player.getWeaponState();
+      if (weaponState && weaponState.isCharging && weaponState.chargeState) {
+        window.crosshairSystem.updateCharge(weaponState.chargeState.power);
+      } else {
+        window.crosshairSystem.updateCharge(0);
+      }
+    }
   }
   
   // Render scene with player camera
@@ -827,51 +921,6 @@ function setupDebugCommands() {
     
     // Reset to balanced defaults
     reset() {
-      this.airControl = 0.3;
-      this.groundSpeed = 32.0;
-      this.jumpHeight = 1.0;
-      this.jumpInfluence = 0.35;
-      this.apply();
-      console.log("Movement settings reset to improved balanced defaults");
-    }
-  };
-
-  // Simplified movement physics controls - uses the balanced preset with speed boost
-  window.movePhysics = {
-    // Core movement parameters
-    airControl: 0.22,       // Good air control (0.1-0.5)
-    groundSpeed: 18.0,      // Faster ground movement (higher = faster)
-    jumpHeight: 1.0,        // Jump height multiplier
-    jumpInfluence: 0.25,    // How much direction affects jumps (0-1)
-    
-    // Apply settings to the player
-    apply() {
-      if (!player || !player.controls) {
-        console.warn("Player not initialized yet");
-        return false;
-      }
-      
-      // Update control parameters
-      player.controls.airControlFactor = this.airControl;
-      player.controls.moveSpeed = this.groundSpeed;
-      player.controls.jumpDirectionMix = this.jumpInfluence;
-      
-      // Set jump height
-      player.controls.jumpStrength = physics.jumpStrength * this.jumpHeight;
-      
-      console.log("✓ Movement settings applied!");
-      return true;
-    },
-    
-    // Speed boost - make movement 20% faster
-    speedBoost() {
-      this.groundSpeed *= 1.2;
-      this.apply();
-      console.log("Speed boost applied! Ground speed: " + this.groundSpeed.toFixed(1));
-    },
-    
-    // Reset to balanced defaults
-    reset() {
       this.airControl = 0.22;
       this.groundSpeed = 18.0; 
       this.jumpHeight = 1.0;
@@ -1078,47 +1127,57 @@ function setupDebugCommands() {
   fixJump()              // Reset ALL jump state
   debugKeys()            // Monitor key events (30 seconds)
   `);
-
-  // FIXED: Add commands to fix projectile issues
-  window.fixProjectiles = () => {
+  
+  // Add debug command to test projectile collisions
+  window.testTreeCollision = () => {
     if (!player?.weaponSystem?.projectileSystem) {
-      return "Projectile system not available";
+      return "Projectile system not initialized";
     }
     
-    const system = player.weaponSystem.projectileSystem;
+    // Find a tree
+    const trees = collidables.filter(obj => 
+      obj.mesh?.userData?.isTree || obj.mesh?.userData?.isPineTree
+    );
     
-    // Clear all existing projectiles
-    console.log(`Clearing ${system.projectiles.length} projectiles`);
-    system.clear();
-    
-    // Reset the projectile pool
-    system.projectilePool = [];
-    
-    // Give the player fresh ammo
-    player.addAmmo('apple', 20);
-    player.addAmmo('goldenApple', 5);
-    
-    console.log("✅ Projectile system reset! Fresh ammo added.");
-    return "Projectile system fixed";
-  };
-  
-  // Add a debug toggle for the projectile system
-  window.debugProjectileSystem = (enable = true) => {
-    if (!player?.weaponSystem) {
-      return "Weapon system not available";
+    if (trees.length === 0) {
+      return "No trees found";
     }
     
-    player.weaponSystem.setDebug(enable);
-    return `Projectile system debugging ${enable ? 'enabled' : 'disabled'}`;
+    // Get a random tree
+    const tree = trees[Math.floor(Math.random() * trees.length)];
+    console.log("Targeting tree:", tree);
+    
+    // Get tree position
+    const treePos = tree.position || tree.mesh.position;
+    
+    // Get player position
+    const playerPos = player.playerObject.position.clone();
+    
+    // Calculate direction to tree
+    const dirToTree = treePos.clone().sub(playerPos).normalize();
+    
+    // Create projectile with velocity toward the tree
+    const projectile = player.weaponSystem.projectileSystem.createProjectile(
+      // Start position (slightly in front of player)
+      playerPos.clone().addScaledVector(dirToTree, 5),
+      // Velocity (straight toward the tree, fast)
+      dirToTree.clone().multiplyScalar(30),
+      'apple'
+    );
+    
+    // Log info
+    console.log(`Fired test projectile toward tree at ${treePos.toArray()}`);
+    console.log(`Player at ${playerPos.toArray()}`);
+    console.log(`Direction: ${dirToTree.toArray()}`);
+    
+    return "Test projectile fired directly at a tree";
   };
   
-  // Add both commands to the console help
   console.log(`
   // *****************************************
-  // ***** PROJECTILE FIX COMMANDS *****
+  // ***** COLLISION TESTING COMMANDS *****
   // *****************************************
-  fixProjectiles()           // Reset projectile system if apples stop appearing
-  debugProjectileSystem()    // Enable detailed logging of projectile actions
+  testTreeCollision()        // Fire a test projectile directly at a tree
   `);
 }
 
@@ -1166,9 +1225,6 @@ function setupWeaponControls() {
 function initializePlayerUI() {
   // Set up weapon controls
   setupWeaponControls();
-  
-  // Create crosshair
-  const crosshair = new Crosshair();
   
   // Add ammo UI element
   const ammoDisplay = document.createElement('div');
@@ -1223,14 +1279,8 @@ function initializePlayerUI() {
     if (weaponState.isCharging && weaponState.chargeState) {
       powerMeter.style.display = 'block';
       powerFill.style.width = `${weaponState.chargeState.power * 100}%`;
-      
-      // Update crosshair to match charging state
-      crosshair.update(weaponState);
     } else {
       powerMeter.style.display = 'none';
-      
-      // Reset crosshair
-      crosshair.update({ isCharging: false });
     }
     
     requestAnimationFrame(updateUI);
@@ -1905,7 +1955,7 @@ function initializePlayerUI() {
     return `Created collision visualization for ${count} trees`;
   };
   
-  // Add commands to console help
+  // Add console help
   console.log(`
   // *****************************************
   // ***** TREE COLLISION FIX COMMANDS *****
@@ -2020,4 +2070,101 @@ function initializePlayerUI() {
   improveTreeBounce()         // Apply better bounce physics for tree collisions
                               // Makes apples bounce realistically off tree trunks
   `);
+}
+
+// Initialize apple system with extremely conservative settings for better performance
+const appleSystem = new AppleSystem(scene, {
+  sphereRadius: R,
+  getTerrainHeight: getFullTerrainHeight,
+  onAppleCollected: handleAppleCollection,
+  maxApplesPerTree: 4,       // Reduced from 6 for much better performance
+  growthTime: 90,           // Much slower growth to reduce update frequency
+  appleRadius: 3.0,         // Keep size to match projectiles
+  groundLifetime: 180,      // Longer lifetime means fewer updates for despawning/spawning
+  growthProbability: 0.02,  // Very low growth chance to maintain fewer active apples
+  fallProbability: 0.005     // Very low fall chance to maintain fewer physics calculations
+});
+
+// Set performance mode based on device capabilities
+const checkPerformance = () => {
+  // Simple detection based on estimated GPU power
+  const isLowPerformanceDevice = 
+    /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+    (window.screen && window.screen.width < 1024);
+    
+  if (appleSystem.setLowPerformanceMode) {
+    appleSystem.setLowPerformanceMode(isLowPerformanceDevice);
+    console.log(`Detected ${isLowPerformanceDevice ? 'LOW' : 'NORMAL'} performance device`);
+  }
+};
+
+// Check performance after initialization
+setTimeout(checkPerformance, 1000);
+
+// Add performance controls to the window
+window.applePerformance = {
+  low: () => {
+    if (appleSystem.setLowPerformanceMode) {
+      appleSystem.setLowPerformanceMode(true);
+      console.log("Low performance mode enabled");
+    }
+  },
+  normal: () => {
+    if (appleSystem.setLowPerformanceMode) {
+      appleSystem.setLowPerformanceMode(false);
+      console.log("Normal performance mode enabled");
+    }
+  },
+  status: () => {
+    if (appleSystem.lowPerformanceMode !== undefined) {
+      return `Currently in ${appleSystem.lowPerformanceMode ? 'LOW' : 'NORMAL'} performance mode`;
+    }
+    return "Performance mode unknown";
+  },
+  maxApples: (count) => {
+    if (appleSystem && typeof count === 'number') {
+      const oldCount = appleSystem.options.maxApplesPerTree;
+      appleSystem.options.maxApplesPerTree = Math.max(1, Math.min(20, count));
+      console.log(`Changed max apples per tree: ${oldCount} -> ${appleSystem.options.maxApplesPerTree}`);
+      return appleSystem.options.maxApplesPerTree;
+    }
+    return "Invalid count";
+  },
+  clearAll: () => {
+    if (!appleSystem) return "Apple system not initialized";
+    
+    // Clear all ground apples
+    appleSystem.groundApples.forEach(apple => {
+      if (apple.mesh && apple.mesh.parent) {
+        appleSystem.scene.remove(apple.mesh);
+      }
+    });
+    appleSystem.groundApples = [];
+    
+    // Clear all tree apples
+    Object.values(appleSystem.growthPoints).forEach(points => {
+      points.forEach(point => {
+        if (point.hasApple && point.apple) {
+          appleSystem.scene.remove(point.apple);
+          point.hasApple = false;
+          point.apple = null;
+          point.growthProgress = 0;
+        }
+      });
+    });
+    
+    console.log("All apples cleared to improve performance");
+    return "All apples cleared";
+  }
+};
+
+// Fix the handleAppleCollection function that is referenced but not defined
+/**
+ * Handle apple collection event - simplified for performance
+ */
+function handleAppleCollection(type, value, position) {
+  // Add to player's ammo without extra effects
+  if (player) {
+    player.addAmmo(type, value);
+  }
 }
