@@ -15,6 +15,7 @@ export default class WeaponSystem {
   constructor(scene, camera, options = {}) {
     this.scene = scene;
     this.camera = camera;
+    this.player = options.player || null; // Store player reference if provided
     
     // Configure with defaults
     this.options = Object.assign({
@@ -539,5 +540,21 @@ export default class WeaponSystem {
     const idleAmount = Math.sin(time * 2) * 0.01;
     this.weaponModel.position.y = this.initialWeaponPosition.y + idleAmount;
     this.weaponModel.rotation.x = this.initialWeaponRotation.x + idleAmount * 0.1;
+  }
+
+  /**
+   * Release the weapon and fire the projectile
+   */
+  release() {
+    // Simply call fireProjectile() without the extra checks
+    return this.fireProjectile();
+  }
+
+  /**
+   * Provide a method for the Player class to provide itself as a reference
+   * @param {Object} player - The player object
+   */
+  setPlayer(player) {
+    this.player = player;
   }
 }
