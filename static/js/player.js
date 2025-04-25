@@ -97,7 +97,10 @@ export default class Player {
         playerRadius: this.options.playerRadius,
         collidables: this.options.collidables,
         startPosition: this.options.startPosition,
-        startElevation: this.options.startElevation
+        startElevation: this.options.startElevation,
+        crouchHeight: 0.5, // 50% of normal height when crouched
+        crouchSpeedMultiplier: 0.7, // 70% movement speed when crouched
+        crouchTransitionTime: 0.2 // Smooth transition time in seconds
       }
     );
     
@@ -144,8 +147,14 @@ export default class Player {
       projectileSpeed: 160, // INCREASED: Quadrupled from 40 to 160 for much faster projectiles
       projectileRadius: 0.8,
       getTerrainHeight: this.options.getTerrainHeight,
-      collidables: this.options.collidables
+      collidables: this.options.collidables,
+      player: this // Pass the player reference
     });
+    
+    // Alternatively, set player directly after creation
+    if (this.weaponSystem && typeof this.weaponSystem.setPlayer === 'function') {
+      this.weaponSystem.setPlayer(this);
+    }
     
     // Add this line to set up the weapon model
     this.weaponSystem.setupModel(this.camera);
@@ -214,6 +223,20 @@ export default class Player {
     
     // Update UI indicators if near tree or boost available
     this._updateTreeJumpIndicators();
+
+    // Update debug body height if it exists and we're crouching
+    if (this.debugBody && this.controls.crouchAmount > 0) {
+      // Scale the debug cylinder to match crouch height
+      const fullHeight = this.options.playerRadius * 2;
+      const crouchHeight = fullHeight * (1 - (this.controls.crouchAmount * 0.5)); // Reduce by up to 50%
+      const scale = crouchHeight / fullHeight;
+      
+      this.debugBody.scale.y = scale;
+      
+      // Adjust position to keep feet at the same place
+      const heightDiff = fullHeight - crouchHeight;
+      this.debugBody.position.y = -(crouchHeight / 2) + (heightDiff / 2);
+    }
   }
 
   /**
@@ -360,7 +383,10 @@ export default class Player {
       jumpsRemaining: this.controls.jumpsRemaining,
       maxJumps: this.controls.maxJumps,
       isGravityWorking: gravComponent > 0, // falling = true, rising = false
-      verticalSpeed: gravComponent
+      verticalSpeed: gravComponent,
+      isCrouching: this.controls.isCrouching,
+      crouchAmount: this.controls.crouchAmount, // Add crouch amount for smoothness info
+      crouchToggled: this.controls.crouchToggled // Add toggle state info
     };
   }
 
@@ -387,26 +413,54 @@ export default class Player {
    * Fire the weapon
    */
   fireWeapon() {
-    if (!this.weaponSystem) return false;
+    console.log("Player#fireWeapon called");
     
-    console.log("Player#fireWeapon called"); // Debug logging
+    // CRITICAL NEW SAFETY: Inform controls about weapon firing state
+    if (this.controls && typeof this.controls.setWeaponFiring === 'function') {
+        this.controls.setWeaponFiring(true);
+    }
     
-    // FIXED: Changed startCharge to startCharging to match WeaponSystem
-    const started = this.weaponSystem.startCharging();
-    return started;
+    // Existing weapon firing code...
+    if (this.weaponSystem) {
+        return this.weaponSystem.startCharging();
+    }
+    return false;
   }
 
   /**
    * Release the weapon
    */
   releaseWeapon() {
-    if (!this.weaponSystem) return null;
+    console.log("Player#releaseWeapon called");
     
-    console.log("Player#releaseWeapon called"); // Debug logging
+    // CRITICAL NEW SAFETY: Reset weapon firing state
+    if (this.controls && typeof this.controls.setWeaponFiring === 'function') {
+      this.controls.setWeaponFiring(false);
+    }
     
-    // FIXED: Changed releaseShot to fireProjectile to match WeaponSystem implementation
-    const result = this.weaponSystem.fireProjectile();
-    return result;
+    // Apply safety check directly here instead of in WeaponSystem
+    if (this.controls && !this.controls.onGround) {
+      // Apply extra safety check on velocity before firing
+      const velocity = this.controls.velocity;
+      const speed = velocity.length();
+      const maxSafeSpeed = 35;
+      
+      if (speed > maxSafeSpeed) {
+        console.warn(`Pre-fire velocity check: ${speed.toFixed(1)} exceeds safe limit, capping to ${maxSafeSpeed}`);
+        velocity.normalize().multiplyScalar(maxSafeSpeed);
+      }
+    }
+    
+    // More resilient weapon firing that handles errors
+    try {
+      if (this.weaponSystem) {
+        return this.weaponSystem.fireProjectile(); // Call fireProjectile directly
+      }
+    } catch (e) {
+      console.error("Error releasing weapon:", e);
+    }
+    
+    return null;
   }
 
   /**
@@ -475,5 +529,23 @@ export default class Player {
    */
   addAmmo(type, amount) {
     return this.weaponSystem.addAmmo(type, amount);
+  }
+
+  /**
+   * Add a method to check if the player is crouching
+   */
+  isCrouching() {
+    return this.controls?.isCrouching || false;
+  }
+
+  /**
+   * Add a method to toggle crouch state
+   */
+  toggleCrouch() {
+    if (this.controls) {
+      this.controls.toggleCrouch();
+      return this.controls.isCrouching;
+    }
+    return false;
   }
 }
