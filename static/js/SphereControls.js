@@ -105,6 +105,24 @@ export default class SphereControls {
     
     // Extreme position safety
     this.maxHeightAboveGround = 45;
+
+    // Add crouch options to the constructor
+    this.options = Object.assign({
+      crouchHeight: 0.5, // Height multiplier when crouching (50% of normal height)
+      crouchSpeedMultiplier: 0.7, // Movement is 70% speed when crouching
+      crouchTransitionTime: 0.2 // Seconds to transition to/from crouch
+    }, options);
+
+    // Add crouch state properties
+    this.isCrouching = false;
+    this.crouchToggled = false; // For toggle vs hold mode
+    this.crouchAmount = 0; // 0 = standing, 1 = fully crouched (for smooth transitions)
+    this.crouchTransition = null; // Store transition animation
+    this.lastCrouchTime = 0; // For double-tap detection
+
+    // Store initial camera positions for correct crouching
+    this.originalCameraY = options.eyeHeight || 6.6;
+    this.cameraHeight = this.originalCameraY;
   }
 
   getObject() {
@@ -189,6 +207,22 @@ export default class SphereControls {
         console.log("Jump prevented - remaining jumps:", this.jumpsRemaining, "cooldown:", this.jumpCooldown.toFixed(3));
       }
     }
+
+    // Add crouch key handling
+    if ((e.key === 'Shift' && (e.code === 'ShiftLeft' || e.keyCode === 16)) && !this.keys.crouching) {
+      // Start crouching
+      this.keys.crouching = true;
+      
+      // Toggle crouch mode if double-tapped quickly
+      const now = Date.now();
+      if (now - this.lastCrouchTime < 300) { // 300ms for double-tap detection
+        this.crouchToggled = !this.crouchToggled;
+      }
+      this.lastCrouchTime = now;
+      
+      // If toggled, stay crouched, otherwise crouch while key is held
+      this.startCrouch(this.crouchToggled);
+    }
   }
   
   onKeyUp(e) { 
@@ -199,6 +233,16 @@ export default class SphereControls {
     if ((key === ' ' || key === 'spacebar') && this.jumpCooldown > 0) {
       this.jumpCooldown = 0;
       console.log("Jump cooldown reset on key release");
+    }
+
+    // Release crouch if not in toggle mode
+    if (e.key === 'Shift' && (e.code === 'ShiftLeft' || e.keyCode === 16)) {
+      this.keys.crouching = false;
+      
+      // Only stop crouching if not in toggle mode
+      if (!this.crouchToggled) {
+        this.stopCrouch();
+      }
     }
   }
 
@@ -371,6 +415,10 @@ export default class SphereControls {
         this.jumpCooldown = 0;
       }
     }
+
+    // Add this near the end of the update method
+    // Update camera based on crouch state
+    this._applyCrouchState();
   }
 
   // Align up direction to planet center
@@ -576,5 +624,125 @@ export default class SphereControls {
 
   getVelocity() {
     return this.velocity.clone();
+  }
+
+  // Add helper method to apply crouch state
+  _applyCrouchState() {
+    // Calculate height based on crouch amount
+    const fullHeight = this.originalCameraY || this.options.eyeHeight || 6.6;
+    const crouchHeight = fullHeight * this.options.crouchHeight;
+    const currentHeight = fullHeight - ((fullHeight - crouchHeight) * this.crouchAmount);
+    
+    // Set camera local Y position directly
+    this.camera.position.y = currentHeight;
+    
+    // Store the current height for other systems to reference
+    this.cameraHeight = currentHeight;
+  }
+
+  // Add crouch control methods
+  startCrouch(isToggle = false) {
+    this.isCrouching = true;
+    
+    // Cancel any existing transition
+    if (this.crouchTransition) {
+      cancelAnimationFrame(this.crouchTransition);
+      this.crouchTransition = null;
+    }
+    
+    // Use faster transitions in air for better feel
+    const inAir = !this.onGround;
+    const transitionTime = inAir ? 
+      this.options.crouchTransitionTime * 0.7 : // 30% faster in air
+      this.options.crouchTransitionTime;
+    
+    // Smoothly transition to crouched state
+    const startAmount = this.crouchAmount;
+    const startTime = performance.now();
+    const duration = transitionTime * 1000;
+    
+    // Create transition function
+    const animateCrouch = (time) => {
+      const elapsed = time - startTime;
+      const progress = Math.min(1.0, elapsed / duration);
+      
+      // Use ease-out function for smooth transition
+      const easeOut = 1 - Math.pow(1 - progress, 2);
+      this.crouchAmount = startAmount + (1 - startAmount) * easeOut;
+      
+      // Apply the updated crouch amount immediately
+      this._applyCrouchState();
+      
+      if (progress < 1.0) {
+        this.crouchTransition = requestAnimationFrame(animateCrouch);
+      } else {
+        this.crouchAmount = 1.0; // Ensure we reach exactly 1
+        this._applyCrouchState(); // Apply final state
+        this.crouchTransition = null;
+      }
+    };
+    
+    // Start transition animation
+    this.crouchTransition = requestAnimationFrame(animateCrouch);
+  }
+
+  stopCrouch() {
+    // Only process if we're actually crouching
+    if (!this.isCrouching) return;
+    
+    this.isCrouching = false;
+    this.crouchToggled = false;
+    
+    // Cancel any existing transition
+    if (this.crouchTransition) {
+      cancelAnimationFrame(this.crouchTransition);
+      this.crouchTransition = null;
+    }
+    
+    // Use faster transitions in air for better feel
+    const inAir = !this.onGround;
+    const transitionTime = inAir ? 
+      this.options.crouchTransitionTime * 0.7 : // 30% faster in air
+      this.options.crouchTransitionTime;
+    
+    // Smoothly transition back to standing
+    const startAmount = this.crouchAmount;
+    const startTime = performance.now();
+    const duration = transitionTime * 1000;
+    
+    // Create transition function
+    const animateStand = (time) => {
+      const elapsed = time - startTime;
+      const progress = Math.min(1.0, elapsed / duration);
+      
+      // Use ease-out function for smooth transition
+      const easeOut = 1 - Math.pow(1 - progress, 2);
+      this.crouchAmount = startAmount - startAmount * easeOut;
+      
+      // Apply the updated crouch amount immediately
+      this._applyCrouchState();
+      
+      if (progress < 1.0) {
+        this.crouchTransition = requestAnimationFrame(animateStand);
+      } else {
+        this.crouchAmount = 0.0; // Ensure we reach exactly 0
+        this._applyCrouchState(); // Apply final state
+        this.crouchTransition = null;
+      }
+    };
+    
+    // Start transition animation
+    this.crouchTransition = requestAnimationFrame(animateStand);
+  }
+
+  // Toggle crouching state
+  toggleCrouch() {
+    if (this.isCrouching && this.crouchToggled) {
+      this.crouchToggled = false;
+      this.stopCrouch();
+    } else {
+      this.crouchToggled = true;
+      this.startCrouch(true);
+    }
   }
 }
