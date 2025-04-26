@@ -119,6 +119,9 @@ export default class LowPolyGenerator {
     group.userData.totalHeight = trunkHeight + foliageRadius * 2;
     group.userData.foliageScale = foliageScale;
     
+    // *** ADD LOGGING ***
+    console.log(`[LowPolyGenerator] Created Tree Mesh: ID=${group.id}, Name=${group.name}, userData=`, JSON.stringify(group.userData));
+    
     return group;
   }
   

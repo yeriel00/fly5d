@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import SphereControls from './SphereControls.js';
 import OrientationHelper from './OrientationHelper.js';
 import WeaponSystem from './WeaponSystem.js';
-import TreeJumpEnhancer from './TreeJumpEnhancer.js';  // Add import for TreeJumpEnhancer
+import TreeJumpEnhancer from './TreeJumpEnhancer.js';
 
 /**
  * Player class that manages the first-person character
@@ -30,7 +30,22 @@ export default class Player {
       playerColor: 0x0000FF, // Blue
       debugMode: false,
       terrainConformFactor: 0.9, // How strongly camera conforms to terrain (0-1),
+      // *** Add projectile speeds config ***
+      projectileSpeeds: { // Base speeds for different ammo types
+          red: 40.0,
+          yellow: 55.0,
+          green: 70.0
+      },
+      // *** End projectile speeds config ***
     }, options);
+
+    // *** Initialize multi-ammo storage ***
+    this.ammo = {
+        red: 0,
+        yellow: 0,
+        green: 0
+    };
+    // *** End multi-ammo storage ***
 
     // Initialize components
     this._initCamera();
@@ -144,11 +159,13 @@ export default class Player {
     this.weaponSystem = new WeaponSystem(this.scene, this.camera, {
       sphereRadius: this.options.sphereRadius,
       gravity: this.options.gravity * 0.75, // Use slightly less gravity for projectiles
-      projectileSpeed: 160, // INCREASED: Quadrupled from 40 to 160 for much faster projectiles
       projectileRadius: 0.8,
       getTerrainHeight: this.options.getTerrainHeight,
       collidables: this.options.collidables,
-      player: this // Pass the player reference
+      player: this, // Pass the player reference
+      // *** Pass the player's ammo object ***
+      ammoSource: this.ammo
+      // *** End pass ammo object ***
     });
     
     // Alternatively, set player directly after creation
@@ -162,7 +179,7 @@ export default class Player {
     // Weapon input state
     this.weaponInput = {
       firing: false,
-      weaponSwitchTimer: 0
+      weaponSwitchTimer: 0 // Cooldown for ammo switching
     };
   }
 
@@ -194,7 +211,7 @@ export default class Player {
     this.orientHelper.update();
 
     // Update the weapon system - pass player position
-    this.weaponSystem.update(delta, this.playerObject.position);
+    this.weaponSystem.update(delta);
     
     // Update tree jump enhancer
     const currentTime = Date.now() / 1000;
@@ -422,6 +439,7 @@ export default class Player {
     
     // Existing weapon firing code...
     if (this.weaponSystem) {
+        // startCharging now returns false if no ammo, preventing incorrect animation
         return this.weaponSystem.startCharging();
     }
     return false;
@@ -438,29 +456,63 @@ export default class Player {
       this.controls.setWeaponFiring(false);
     }
     
-    // Apply safety check directly here instead of in WeaponSystem
-    if (this.controls && !this.controls.onGround) {
-      // Apply extra safety check on velocity before firing
-      const velocity = this.controls.velocity;
-      const speed = velocity.length();
-      const maxSafeSpeed = 35;
-      
-      if (speed > maxSafeSpeed) {
-        console.warn(`Pre-fire velocity check: ${speed.toFixed(1)} exceeds safe limit, capping to ${maxSafeSpeed}`);
-        velocity.normalize().multiplyScalar(maxSafeSpeed);
+    if (!this.weaponSystem) return { fired: false };
+
+    console.log("Player#releaseWeapon -> Calling weaponSystem.release()");
+    const result = this.weaponSystem.release(); // Get charge info { canFire, power, ammoType }
+    console.log("Player#releaseWeapon -> weaponSystem.release() result:", result);
+
+    if (result && result.canFire && result.ammoType) {
+      const ammoTypeToConsume = result.ammoType;
+
+      // Check ammo again just before firing (safety)
+      if (!this.ammo || this.ammo[ammoTypeToConsume] <= 0) {
+          console.warn(`Player#releaseWeapon -> Ammo check failed just before firing ${ammoTypeToConsume}. Aborting.`);
+          return { fired: false };
       }
+
+      const cameraPos = new THREE.Vector3();
+      const cameraDir = new THREE.Vector3();
+      this.camera.getWorldPosition(cameraPos);
+      this.camera.getWorldDirection(cameraDir);
+
+      // *** Calculate Speed Based on Ammo Type from Player options ***
+      const baseSpeed = this.options.projectileSpeeds[ammoTypeToConsume] || this.options.projectileSpeeds.red; // Default to red speed
+      const finalSpeed = baseSpeed * (0.5 + result.power * 0.5); // Scale speed by charge power (min 50%)
+      // *** End Calculate Speed ***
+
+      const initialVelocity = cameraDir.clone().multiplyScalar(finalSpeed);
+      const startPosition = cameraPos.clone().addScaledVector(cameraDir, this.options.playerRadius * 1.2);
+
+      console.log(`Player#releaseWeapon -> Firing ${ammoTypeToConsume}. Ammo before: ${this.ammo[ammoTypeToConsume]}`);
+
+      // Create the projectile
+      const projectile = this.weaponSystem.projectileSystem.createProjectile(
+        startPosition,
+        initialVelocity,
+        ammoTypeToConsume // Pass the correct ammo type
+      );
+
+      // Consume ammo
+      this.ammo[ammoTypeToConsume]--;
+      console.log(`Player#releaseWeapon -> Ammo after: ${this.ammo[ammoTypeToConsume]}`);
+
+      // Return info
+      return {
+        fired: true,
+        power: result.power,
+        projectile: {
+          type: ammoTypeToConsume,
+          speed: finalSpeed
+        }
+      };
+    } else if (result && !result.canFire) {
+      const failedAmmoType = result.ammoType || 'unknown';
+      console.log(`Player#releaseWeapon -> Cannot fire, weaponSystem reported !canFire. Ammo type: ${failedAmmoType}, Ammo count: ${this.ammo[failedAmmoType] ?? 'N/A'}`);
+    } else if (!result) {
+       console.log("Player#releaseWeapon -> weaponSystem.release() returned null/falsy.");
     }
-    
-    // More resilient weapon firing that handles errors
-    try {
-      if (this.weaponSystem) {
-        return this.weaponSystem.fireProjectile(); // Call fireProjectile directly
-      }
-    } catch (e) {
-      console.error("Error releasing weapon:", e);
-    }
-    
-    return null;
+    return { fired: false }; // Indicate failure
   }
 
   /**
@@ -475,22 +527,20 @@ export default class Player {
     this.weaponSystem.cancelCharge();
   }
 
-  /**
-   * Switch the weapon
-   */
-  switchWeapon() {
+  /** Cycle through available ammo types */
+  cycleWeapon() {
     // Prevent rapid switching
     if (this.weaponInput.weaponSwitchTimer > 0) return false;
-    
-    const state = this.weaponSystem.getState();
-    const newWeapon = state.currentWeapon === 'slingshot' ? 'goldenSlingshot' : 'slingshot';
-    
-    const result = this.weaponSystem.switchWeapon(newWeapon);
-    if (result) {
-      this.weaponInput.weaponSwitchTimer = 0.5; // 500ms cooldown
+    if (!this.weaponSystem) return false;
+
+    const newType = this.weaponSystem.cycleAmmoType();
+    if (newType) {
+      this.weaponInput.weaponSwitchTimer = 0.3; // 300ms cooldown
+      console.log(`Player cycled weapon to: ${newType}`);
+      // Optionally trigger UI update here if needed immediately
+      return true;
     }
-    
-    return result;
+    return false;
   }
 
   /**
@@ -528,7 +578,17 @@ export default class Player {
    * Add ammo to the weapon
    */
   addAmmo(type, amount) {
-    return this.weaponSystem.addAmmo(type, amount);
+    // *** Handle red, yellow, green types ***
+    if (this.ammo.hasOwnProperty(type)) {
+      this.ammo[type] = Math.max(0, this.ammo[type] + amount);
+      console.log(`Player Ammo: Added ${amount} ${type}. Total ${type}: ${this.ammo[type]}`);
+      // Optionally trigger UI update
+      return this.ammo[type];
+    } else {
+      console.warn(`Player: Unknown ammo type "${type}"`);
+      return 0;
+    }
+    // *** End handle types ***
   }
 
   /**

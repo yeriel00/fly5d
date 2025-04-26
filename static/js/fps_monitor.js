@@ -152,3 +152,40 @@ export default class FPSMonitor {
     this.options.showDisplay = show;
   }
 }
+
+// …existing code…
+
+// OVERRIDE performanceOptimizer ONLY if it exists
+if (window.performanceOptimizer) {
+  const perf = window.performanceOptimizer;
+
+  // Block its clearApples method
+  if (typeof perf.clearApples === 'function') {
+    perf.clearApples = function() {
+      console.log("🛡️ BLOCKED: performanceOptimizer.clearApples");
+      return "Prevented";
+    };
+  }
+
+  // Wrap setOptimizationLevel
+  if (typeof perf.setOptimizationLevel === 'function') {
+    const orig = perf.setOptimizationLevel;
+    perf.setOptimizationLevel = function(level) {
+      console.log(`⚡ INTERCEPTED: Optimization level → ${level}`);
+      const result = orig.call(perf, level);
+
+      // Prevent apple clearing at high levels
+      if (level >= 3) {
+        console.log(`⚡ Skipped clearAllApplesToImprovePerformance at level ${level}`);
+        // clearAllApplesToImprovePerformance is now a no-op
+      }
+
+      return result;
+    };
+  }
+
+} else {
+  console.warn("performanceOptimizer not defined — skipping its overrides");
+}
+
+// …existing code…

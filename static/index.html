@@ -28,6 +28,7 @@
         <li>WASD - Move</li>
         <li>Mouse - Look around</li>
         <li>Space - Jump</li>
+        <li><strong>Left Shift - Crouch</strong> (hold or double-tap to toggle)</li>
         <li>Q - Switch weapon</li>
         <li>Left Mouse - Fire weapon</li>
       </ul>
@@ -35,6 +36,7 @@
       <ul>
         <li>give30Apples() - Get 30 apples immediately</li>
         <li>toggleFPS() - Show performance stats</li>
+        <li><strong>emergencyFixTreesAndApples()</strong> - Fix tree positions and create visible apples</li>
       </ul>
       <button id="close-help">Got it!</button>
     </div>
@@ -52,7 +54,12 @@
       }
     }
   </script>
+
+  <!-- Load main.js first -->
   <script type="module" src="/static/js/main.js"></script>
+  
+  <!-- Load tree fix script -->
+  <script type="module" src="/static/js/tree-fixer-pro.js"></script>
   
   <script>
     // Hide loading screen when content loaded
@@ -82,6 +89,14 @@
           document.exitFullscreen();
         }
       });
+
+      // Give player ammo early
+      setTimeout(() => {
+        if (window.player && window.player.addAmmo) {
+          window.player.addAmmo('apple', 50); // Give 50 apples
+          console.log("✅ Gave player 50 apple ammo");
+        }
+      }, 3500);
     });
   </script>
 </body>

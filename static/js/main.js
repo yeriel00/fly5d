@@ -17,6 +17,8 @@ import FPSMonitor from './fps_monitor.js';
 import AppleSystem from './AppleSystem.js'; // Add this import
 // Add CrosshairSystem import
 import CrosshairSystem from './CrosshairSystem.js';
+import AppleGrowthManager from './apple-growth-manager.js';
+import { showDebugOverlay } from './debug-utils.js'; // Import debug overlay
 
 // --- Constants ---
 const R = 400; // INCREASED radius from 300 to 400 for more spacious feel
@@ -509,24 +511,41 @@ initEnvironment(scene, 'medium', worldConfig, (placerFunc) => {
   
   // Register apple system optimizer AFTER fpsMonitor is created
   fpsMonitor.registerOptimizer((level) => {
-    if (level === 1) {
-      // First level optimization
-      if (window.applePerformance) window.applePerformance.low();
-      
-      // Reduce max apples
-      if (appleSystem) appleSystem.options.maxApplesPerTree = 3;
-      
-    } else if (level === 2) {
-      // Second level optimization - drastic measures
-      if (appleSystem) {
-        appleSystem.options.maxApplesPerTree = 2;
-        appleSystem.options.growthProbability *= 0.5;
-        appleSystem.options.fallProbability *= 0.5;
-      }
-      
-    } else if (level >= 3) {
-      // Critical optimization - clear most apples
-      if (window.applePerformance) window.applePerformance.clearAll();
+    // *** Access appleSystem via the global manager ***
+    const currentAppleSystem = window.appleGrowthMgr?.appleSystem;
+    if (!currentAppleSystem) {
+        console.warn("[FPS Optimizer] AppleSystem not available for optimization.");
+        return; // Exit if apple system isn't ready
+    }
+
+    try { // Add try...catch for safety
+        if (level === 1) {
+          // First level optimization
+          // if (window.applePerformance) window.applePerformance.low(); // Remove if applePerformance doesn't exist
+
+          // Reduce max apples
+          currentAppleSystem.options.maxApplesPerTree = 3;
+          console.log("[FPS Optimizer L1] Reduced max apples per tree to 3.");
+
+        } else if (level === 2) {
+          // Second level optimization - drastic measures
+          currentAppleSystem.options.maxApplesPerTree = 2;
+          currentAppleSystem.options.growthProbability *= 0.5;
+          currentAppleSystem.options.fallProbability *= 0.5;
+          console.log("[FPS Optimizer L2] Reduced max apples, growth, and fall probability.");
+
+        } else if (level >= 3) {
+          // Critical optimization - clear most apples
+          // if (window.applePerformance) window.applePerformance.clearAll(); // Remove if applePerformance doesn't exist
+          currentAppleSystem.options.maxApplesPerTree = 1;
+          currentAppleSystem.options.growthProbability = 0.001; // Almost zero growth
+          currentAppleSystem.options.fallProbability = 0.001;
+          console.log("[FPS Optimizer L3+] Critically reduced apple system activity.");
+          // Optionally, clear existing apples:
+          // currentAppleSystem.cleanup(); // Or a less drastic clear method if available
+        }
+    } catch (e) {
+        console.error("Error applying apple system optimization:", e);
     }
   });
   
@@ -543,6 +562,23 @@ initEnvironment(scene, 'medium', worldConfig, (placerFunc) => {
   // Make crosshair and charge indicator available globally for other systems
   window.crosshairSystem = crosshairSystem;
   
+  // Initialize and start apple growth manager
+  const appleGrowthMgr = new AppleGrowthManager(
+    scene,
+    getFullTerrainHeight,       // imported from world_objects.js
+    // --- REVERTED onCollect callback ---
+    (type, value, effectMultiplier, pos) => { // Removed effectMultiplier usage here
+      if (player) {
+        player.addAmmo(type, value); // Add ammo of the correct type
+        // NO player speed boost applied here anymore
+      }
+    },
+    // --- End REVERTED onCollect callback ---
+    { speedMultiplier: 5 } // start 5× faster
+  );
+  window.appleGrowthMgr = appleGrowthMgr;  // expose for console
+  appleGrowthMgr.init();
+
   // Start animation loop after player is created
   animate();
 });
@@ -602,6 +638,15 @@ function animate(timestamp) {
     }
   }
   
+  // *** ADDED LOG: Check if apple system update is called ***
+  if (window.appleGrowthMgr && window.appleGrowthMgr.appleSystem) {
+    // console.log("Calling appleSystem.update"); // Optional: uncomment for verbose logging
+    window.appleGrowthMgr.appleSystem.update(delta, player ? player.playerObject.position : null);
+  } else {
+    // console.warn("Apple system not ready for update."); // Optional: uncomment for verbose logging
+  }
+  // *** END ADDED LOG ***
+
   // Render scene with player camera
   if (player) {
     renderer.render(scene, player.getCamera());
@@ -1188,7 +1233,13 @@ setupDebugCommands();
 function setupWeaponControls() {
   // Mouse controls for slingshot
   document.addEventListener('mousedown', (e) => {
+    // *** ADD LOG ***
+    console.log("[main.js] Mouse Down Event", { button: e.button, playerExists: !!player });
+    // *** END LOG ***
     if (e.button === 0 && player) { // Left mouse button
+      // *** ADD LOG ***
+      console.log("[main.js] Calling player.fireWeapon()");
+      // *** END LOG ***
       player.fireWeapon();
       
       // Show feedback in debug console
@@ -1198,8 +1249,18 @@ function setupWeaponControls() {
   });
   
   document.addEventListener('mouseup', (e) => {
+    // *** ADD LOG ***
+    console.log("[main.js] Mouse Up Event", { button: e.button, playerExists: !!player });
+    // *** END LOG ***
     if (e.button === 0 && player) { // Left mouse button
+      // *** ADD LOG ***
+      console.log("[main.js] Calling player.releaseWeapon()");
+      // *** END LOG ***
       const result = player.releaseWeapon();
+      
+      // *** ADD LOG ***
+      console.log("[main.js] player.releaseWeapon() result:", result);
+      // *** END LOG ***
       
       if (result && result.projectile) {
         console.log(`Fired ${result.projectile.type} with power ${result.power.toFixed(2)}`);
@@ -1219,6 +1280,17 @@ function setupWeaponControls() {
       }
     }
   });
+
+  // *** Add Right Click listener for cycling ammo ***
+  document.addEventListener('contextmenu', (e) => {
+    e.preventDefault(); // Prevent browser context menu
+    console.log("[main.js] Context Menu Event (Right Click)");
+    if (player) {
+      console.log("[main.js] Calling player.cycleWeapon()");
+      player.cycleWeapon();
+    }
+  });
+  // *** End Right Click listener ***
 }
 
 // Add this call after player initialization
@@ -1239,7 +1311,12 @@ function initializePlayerUI() {
   ammoDisplay.style.background = 'rgba(0, 0, 0, 0.5)';
   ammoDisplay.style.borderRadius = '5px';
   document.body.appendChild(ammoDisplay);
-  
+
+  // --- REMOVE Speed Boost UI ---
+  // const speedBoostDisplay = document.createElement('div');
+  // ... (all speedBoostDisplay related code removed) ...
+  // --- END REMOVE Speed Boost UI ---
+
   // Add power meter for slingshot charging
   const powerMeter = document.createElement('div');
   powerMeter.id = 'power-meter';
@@ -1266,48 +1343,76 @@ function initializePlayerUI() {
   
   // Update UI in animation loop
   function updateUI() {
-    if (!player) return;
-    
-    const weaponState = player.getWeaponState();
-    
-    // Update ammo display
-    ammoDisplay.textContent = `${weaponState.currentWeapon === 'slingshot' ? 'Apples' : 'Golden Apples'}: ${
-      weaponState.currentWeapon === 'slingshot' ? weaponState.ammo.apple : weaponState.ammo.goldenApple
-    }`;
-    
-    // Update power meter
-    if (weaponState.isCharging && weaponState.chargeState) {
-      powerMeter.style.display = 'block';
-      powerFill.style.width = `${weaponState.chargeState.power * 100}%`;
-    } else {
-      powerMeter.style.display = 'none';
+    // *** MORE ROBUST CHECK ***
+    // Ensure player exists, player.ammo exists, and player.ammo.red is defined (as a proxy for full initialization)
+    if (!player || !player.ammo || typeof player.ammo.red === 'undefined') {
+        // console.log("updateUI: Player or player.ammo not fully ready yet."); // Optional: uncomment for verbose logging
+        requestAnimationFrame(updateUI); // Try again next frame
+        return;
     }
-    
+    // *** END MORE ROBUST CHECK ***
+
+    // If we reach here, player and player.ammo should be valid
+    const weaponState = player.getWeaponState();
+    const ammo = player.ammo;
+
+    // console.log("updateUI: Ammo counts:", ammo); // Optional: uncomment for verbose logging
+
+    // Update ammo display for current weapon type
+    let currentAmmoType = 'red';
+    if (weaponState.currentWeapon === 'goldenSlingshot') {
+        if (ammo.green > 0) currentAmmoType = 'green';
+        else if (ammo.yellow > 0) currentAmmoType = 'yellow';
+        else currentAmmoType = 'red';
+    }
+
+    // Display counts for all types, highlight current
+    ammoDisplay.innerHTML = `
+        <span style="color: ${currentAmmoType === 'red' ? '#ff4444' : 'grey'};">R: ${ammo.red}</span> |
+        <span style="color: ${currentAmmoType === 'yellow' ? '#ffff00' : 'grey'};">Y: ${ammo.yellow}</span> |
+        <span style="color: ${currentAmmoType === 'green' ? '#33ff33' : 'grey'};">G: ${ammo.green}</span>
+    `;
+
+    // ... Update power meter ...
+
+    // --- REMOVE Speed Boost UI Update ---
+    // const boost = player.speedBoost;
+    // if (boost && boost.multiplier > 1.0 && boost.endTime > performance.now()) {
+    //   // ... (speedBoostDisplay update logic removed) ...
+    // } else {
+    //   speedBoostDisplay.style.display = 'none';
+    // }
+    // --- END REMOVE Speed Boost UI Update ---
+
     requestAnimationFrame(updateUI);
   }
-  
+
   // Start UI update loop
   updateUI();
   
   // Add debug commands
-  window.giveAmmo = (type = 'apple', amount = 10) => {
+  window.giveAmmo = (type = 'red', amount = 10) => { // Default to red
     if (!player) return "Player not initialized";
+    // Allow giving specific types
+    const validTypes = ['red', 'yellow', 'green'];
+    if (!validTypes.includes(type)) {
+        return `Invalid ammo type. Use: ${validTypes.join(', ')}`;
+    }
     const newAmount = player.addAmmo(type, amount);
-    console.log(`Added ${amount} ${type}(s). New total: ${newAmount}`);
+    console.log(`Added ${amount} ${type} apple(s). New total: ${newAmount}`);
     return newAmount;
   };
   
   console.log(`
   // *****************************************
-  // ***** WEAPON CONTROLS *****
+  // ***** WEAPON & AMMO COMMANDS *****
   // *****************************************
-  Mouse 1 (hold): Charge slingshot
-  Mouse 1 (release): Fire projectile
-  Q: Switch between regular and golden slingshot
-  
+  // ... existing weapon controls ...
+
   // Debug command:
-  giveAmmo('apple', 10)    // Add 10 apple ammo
-  giveAmmo('goldenApple', 5) // Add 5 golden apple ammo
+  giveAmmo('red', 10)
+  giveAmmo('yellow', 5)
+  giveAmmo('green', 2)
   `);
 
   // Add debug visibility controls for projectiles
@@ -1955,7 +2060,7 @@ function initializePlayerUI() {
     return `Created collision visualization for ${count} trees`;
   };
   
-  // Add console help
+  // Add commands to console help
   console.log(`
   // *****************************************
   // ***** TREE COLLISION FIX COMMANDS *****
@@ -2072,99 +2177,3 @@ function initializePlayerUI() {
   `);
 }
 
-// Initialize apple system with extremely conservative settings for better performance
-const appleSystem = new AppleSystem(scene, {
-  sphereRadius: R,
-  getTerrainHeight: getFullTerrainHeight,
-  onAppleCollected: handleAppleCollection,
-  maxApplesPerTree: 4,       // Reduced from 6 for much better performance
-  growthTime: 90,           // Much slower growth to reduce update frequency
-  appleRadius: 3.0,         // Keep size to match projectiles
-  groundLifetime: 180,      // Longer lifetime means fewer updates for despawning/spawning
-  growthProbability: 0.02,  // Very low growth chance to maintain fewer active apples
-  fallProbability: 0.005     // Very low fall chance to maintain fewer physics calculations
-});
-
-// Set performance mode based on device capabilities
-const checkPerformance = () => {
-  // Simple detection based on estimated GPU power
-  const isLowPerformanceDevice = 
-    /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
-    (window.screen && window.screen.width < 1024);
-    
-  if (appleSystem.setLowPerformanceMode) {
-    appleSystem.setLowPerformanceMode(isLowPerformanceDevice);
-    console.log(`Detected ${isLowPerformanceDevice ? 'LOW' : 'NORMAL'} performance device`);
-  }
-};
-
-// Check performance after initialization
-setTimeout(checkPerformance, 1000);
-
-// Add performance controls to the window
-window.applePerformance = {
-  low: () => {
-    if (appleSystem.setLowPerformanceMode) {
-      appleSystem.setLowPerformanceMode(true);
-      console.log("Low performance mode enabled");
-    }
-  },
-  normal: () => {
-    if (appleSystem.setLowPerformanceMode) {
-      appleSystem.setLowPerformanceMode(false);
-      console.log("Normal performance mode enabled");
-    }
-  },
-  status: () => {
-    if (appleSystem.lowPerformanceMode !== undefined) {
-      return `Currently in ${appleSystem.lowPerformanceMode ? 'LOW' : 'NORMAL'} performance mode`;
-    }
-    return "Performance mode unknown";
-  },
-  maxApples: (count) => {
-    if (appleSystem && typeof count === 'number') {
-      const oldCount = appleSystem.options.maxApplesPerTree;
-      appleSystem.options.maxApplesPerTree = Math.max(1, Math.min(20, count));
-      console.log(`Changed max apples per tree: ${oldCount} -> ${appleSystem.options.maxApplesPerTree}`);
-      return appleSystem.options.maxApplesPerTree;
-    }
-    return "Invalid count";
-  },
-  clearAll: () => {
-    if (!appleSystem) return "Apple system not initialized";
-    
-    // Clear all ground apples
-    appleSystem.groundApples.forEach(apple => {
-      if (apple.mesh && apple.mesh.parent) {
-        appleSystem.scene.remove(apple.mesh);
-      }
-    });
-    appleSystem.groundApples = [];
-    
-    // Clear all tree apples
-    Object.values(appleSystem.growthPoints).forEach(points => {
-      points.forEach(point => {
-        if (point.hasApple && point.apple) {
-          appleSystem.scene.remove(point.apple);
-          point.hasApple = false;
-          point.apple = null;
-          point.growthProgress = 0;
-        }
-      });
-    });
-    
-    console.log("All apples cleared to improve performance");
-    return "All apples cleared";
-  }
-};
-
-// Fix the handleAppleCollection function that is referenced but not defined
-/**
- * Handle apple collection event - simplified for performance
- */
-function handleAppleCollection(type, value, position) {
-  // Add to player's ammo without extra effects
-  if (player) {
-    player.addAmmo(type, value);
-  }
-}
