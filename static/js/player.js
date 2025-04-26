@@ -468,6 +468,17 @@ export default class Player {
       // Check ammo again just before firing (safety)
       if (!this.ammo || this.ammo[ammoTypeToConsume] <= 0) {
           console.warn(`Player#releaseWeapon -> Ammo check failed just before firing ${ammoTypeToConsume}. Aborting.`);
+          
+          // Force update UI and model even when failing due to no ammo
+          if (this.weaponSystem) {
+            if (typeof this.weaponSystem._updateAmmoDisplay === 'function') {
+              this.weaponSystem._updateAmmoDisplay();
+            }
+            if (typeof this.weaponSystem.updateModel === 'function') {
+              this.weaponSystem.updateModel();
+            }
+          }
+          
           return { fired: false };
       }
 
@@ -496,6 +507,16 @@ export default class Player {
       // Consume ammo
       this.ammo[ammoTypeToConsume]--;
       console.log(`Player#releaseWeapon -> Ammo after: ${this.ammo[ammoTypeToConsume]}`);
+      
+      // MOST IMPORTANT: Always force UI and model updates after shooting
+      if (this.weaponSystem) {
+        if (typeof this.weaponSystem._updateAmmoDisplay === 'function') {
+          this.weaponSystem._updateAmmoDisplay();
+        }
+        if (typeof this.weaponSystem.updateModel === 'function') {
+          this.weaponSystem.updateModel();
+        }
+      }
 
       // Return info
       return {
@@ -512,6 +533,17 @@ export default class Player {
     } else if (!result) {
        console.log("Player#releaseWeapon -> weaponSystem.release() returned null/falsy.");
     }
+    
+    // CRITICAL: Always force UI and model updates even when release fails
+    if (this.weaponSystem) {
+      if (typeof this.weaponSystem._updateAmmoDisplay === 'function') {
+        this.weaponSystem._updateAmmoDisplay();
+      }
+      if (typeof this.weaponSystem.updateModel === 'function') {
+        this.weaponSystem.updateModel();
+      }
+    }
+    
     return { fired: false }; // Indicate failure
   }
 
@@ -582,7 +614,21 @@ export default class Player {
     if (this.ammo.hasOwnProperty(type)) {
       this.ammo[type] = Math.max(0, this.ammo[type] + amount);
       console.log(`Player Ammo: Added ${amount} ${type}. Total ${type}: ${this.ammo[type]}`);
-      // Optionally trigger UI update
+      
+      // ADDED: Update the UI display whenever ammo is added
+      if (this.weaponSystem && typeof this.weaponSystem._updateAmmoDisplay === 'function') {
+        // Update the ammo display UI
+        this.weaponSystem._updateAmmoDisplay();
+        
+        // Also check if we need to update the model 
+        // (e.g. if player had 0 of this type before but now has some)
+        if (amount > 0 && this.weaponSystem.currentAmmoType === type) {
+          if (typeof this.weaponSystem.updateModel === 'function') {
+            this.weaponSystem.updateModel();
+          }
+        }
+      }
+      
       return this.ammo[type];
     } else {
       console.warn(`Player: Unknown ammo type "${type}"`);

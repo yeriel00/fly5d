@@ -323,6 +323,11 @@ export default class AppleSystem {
     if (playerPosition) {
       this._checkAppleCollection(playerPosition);
     }
+
+    // CRITICAL: Always check for player collision if playerPosition is provided
+    if (playerPosition) {
+      this.checkPlayerCollision(playerPosition);
+    }
   }
 
   /**
@@ -1277,5 +1282,129 @@ export default class AppleSystem {
       treeApples: treeAppleCount,
       groundApples: this.groundApples.length
     };
+  }
+
+  /**
+   * Check for collision with the player
+   * @param {THREE.Vector3} playerPosition - Current player position
+   */
+  checkPlayerCollision(playerPosition) {
+    if (!playerPosition) return;
+    
+    const COLLECTION_RADIUS = 10; // Collection radius in units
+    
+    // Less verbose logging - just a single line per check
+    // console.log(`[AppleSystem] Checking player collision`);
+    
+    // Check fallen apples first
+    this.groundApples.forEach(apple => {
+      const distance = apple.position.distanceTo(playerPosition);
+      
+      if (distance < COLLECTION_RADIUS) {
+        // Determine apple type and value - FIX TYPE MAPPING HERE
+        let type = 'red'; // Default type is red
+        let value = 1;    // Default value is 1
+        
+        // CRITICAL FIX: Map to the correct ammo type names
+        // Special types have different values but need to map to our ammo system
+        if (apple.appleType === 'yellow' || apple.type === 'golden' || apple.type === 'yellow') {
+          type = 'yellow';
+          value = 3;
+        } else if (apple.appleType === 'green' || apple.type === 'magic' || apple.type === 'green') {
+          type = 'green';
+          value = 2;
+        } else if (apple.appleType === 'red' || apple.type === 'red') {
+          type = 'red'; // Already set, but added for clarity
+        }
+        
+        // Call onAppleCollected with correct type and value
+        if (this.options.onAppleCollected) {
+          console.log(`[AppleSystem] Collected ${type} apple worth ${value} ammo!`);
+          this.options.onAppleCollected(type, value, 1, apple.position.clone());
+        }
+        
+        // Handle collection effects
+        this._handleCollected(apple); 
+      }
+    });
+    
+    // Check tree apples using the growthPoints structure
+    Object.values(this.growthPoints).forEach(points => {
+      points.forEach(point => {
+        if (point.hasApple && point.apple && point.growthProgress >= 1.0) {
+          const distance = point.position.distanceTo(playerPosition);
+          
+          if (distance < COLLECTION_RADIUS) {
+            // Directly use the stored type - this should already be set correctly
+            let type = point.appleType || 'red';
+            let value = this.options.appleTypes[type]?.value || 1;
+            
+            console.log(`[AppleSystem] Collected tree ${type} apple worth ${value} ammo!`);
+            
+            // Call onAppleCollected with correct parameters
+            if (this.options.onAppleCollected) {
+              this.options.onAppleCollected(type, value, point.effectMultiplier || 1, point.position.clone());
+            }
+            
+            // Create an apple object structure for _handleCollected
+            const apple = {
+              position: point.position,
+              mesh: point.apple,
+              type: type
+            };
+            
+            // Remove apple from tree
+            this.scene.remove(point.apple);
+            
+            // Reset growth point
+            point.hasApple = false;
+            point.apple = null;
+            point.growthProgress = 0;
+            
+            // Handle collection effects
+            this._handleCollected(apple);
+          }
+        }
+      });
+    });
+  }
+
+  /**
+   * Handle a collected apple
+   * @param {Object} apple - The collected apple object
+   * @private
+   */
+  _handleCollected(apple) {
+    // Add collection animation/effect
+    if (this.options.onAppleEffect) {
+      this.options.onAppleEffect(apple.position.clone(), apple.type);
+    }
+    
+    // Play a sound
+    if (window.game && window.game.audio) {
+      const soundName = apple.type === 'golden' ? 'collectSpecial' : 'collect';
+      window.game.audio.playSound(soundName, 0.4);
+    }
+    
+    // Remove the apple from the scene
+    this.scene.remove(apple.mesh);
+    
+    // Remove from the appropriate array
+    if (this.groundApples.includes(apple)) {
+      this.groundApples = this.groundApples.filter(a => a !== apple);
+      this.stats.groundApplesCollected++;
+    } else if (this.treeApples.includes(apple)) {
+      this.treeApples = this.treeApples.filter(a => a !== apple);
+      this.stats.treeApplesCollected++;
+    }
+    
+    // Update overall stats
+    if (apple.type === 'golden') {
+      this.stats.goldenApplesCollected++;
+    } else {
+      this.stats.applesCollected++;
+    }
+    
+    this.stats.totalCollected++;
   }
 }

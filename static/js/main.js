@@ -566,14 +566,30 @@ initEnvironment(scene, 'medium', worldConfig, (placerFunc) => {
   const appleGrowthMgr = new AppleGrowthManager(
     scene,
     getFullTerrainHeight,       // imported from world_objects.js
-    // --- REVERTED onCollect callback ---
-    (type, value, effectMultiplier, pos) => { // Removed effectMultiplier usage here
+    // Update the callback to refresh the UI immediately after collecting apples
+    (type, value, effectMultiplier, pos) => { 
       if (player) {
-        player.addAmmo(type, value); // Add ammo of the correct type
-        // NO player speed boost applied here anymore
+        const ammoType = type; // Types should directly match ("red", "yellow", "green")
+        console.log(`[AppleCollection] Adding ${value} ${ammoType} apples to inventory`);
+        
+        // Add ammo directly to player inventory
+        player.addAmmo(ammoType, value);
+        
+        // CRITICAL FIX: Immediately update the ammo display in the UI
+        if (player.weaponSystem && typeof player.weaponSystem._updateAmmoDisplay === 'function') {
+          player.weaponSystem._updateAmmoDisplay();
+          
+          // Also force the model update to show the correct apple in the slingshot
+          if (typeof player.weaponSystem.updateModel === 'function') {
+            player.weaponSystem.updateModel();
+          }
+        }
+        
+        // Log inventory status to verify it's working
+        const weaponState = player.getWeaponState();
+        console.log(`[AppleCollection] Current inventory: red=${weaponState.ammo.red}, yellow=${weaponState.ammo.yellow}, green=${weaponState.ammo.green}`);
       }
     },
-    // --- End REVERTED onCollect callback ---
     { speedMultiplier: 5 } // start 5× faster
   );
   window.appleGrowthMgr = appleGrowthMgr;  // expose for console
@@ -1312,11 +1328,6 @@ function initializePlayerUI() {
   ammoDisplay.style.borderRadius = '5px';
   document.body.appendChild(ammoDisplay);
 
-  // --- REMOVE Speed Boost UI ---
-  // const speedBoostDisplay = document.createElement('div');
-  // ... (all speedBoostDisplay related code removed) ...
-  // --- END REMOVE Speed Boost UI ---
-
   // Add power meter for slingshot charging
   const powerMeter = document.createElement('div');
   powerMeter.id = 'power-meter';
@@ -1340,55 +1351,6 @@ function initializePlayerUI() {
   
   powerMeter.appendChild(powerFill);
   document.body.appendChild(powerMeter);
-  
-  // Update UI in animation loop
-  function updateUI() {
-    // *** MORE ROBUST CHECK ***
-    // Ensure player exists, player.ammo exists, and player.ammo.red is defined (as a proxy for full initialization)
-    if (!player || !player.ammo || typeof player.ammo.red === 'undefined') {
-        // console.log("updateUI: Player or player.ammo not fully ready yet."); // Optional: uncomment for verbose logging
-        requestAnimationFrame(updateUI); // Try again next frame
-        return;
-    }
-    // *** END MORE ROBUST CHECK ***
-
-    // If we reach here, player and player.ammo should be valid
-    const weaponState = player.getWeaponState();
-    const ammo = player.ammo;
-
-    // console.log("updateUI: Ammo counts:", ammo); // Optional: uncomment for verbose logging
-
-    // Update ammo display for current weapon type
-    let currentAmmoType = 'red';
-    if (weaponState.currentWeapon === 'goldenSlingshot') {
-        if (ammo.green > 0) currentAmmoType = 'green';
-        else if (ammo.yellow > 0) currentAmmoType = 'yellow';
-        else currentAmmoType = 'red';
-    }
-
-    // Display counts for all types, highlight current
-    ammoDisplay.innerHTML = `
-        <span style="color: ${currentAmmoType === 'red' ? '#ff4444' : 'grey'};">R: ${ammo.red}</span> |
-        <span style="color: ${currentAmmoType === 'yellow' ? '#ffff00' : 'grey'};">Y: ${ammo.yellow}</span> |
-        <span style="color: ${currentAmmoType === 'green' ? '#33ff33' : 'grey'};">G: ${ammo.green}</span>
-    `;
-
-    // ... Update power meter ...
-
-    // --- REMOVE Speed Boost UI Update ---
-    // const boost = player.speedBoost;
-    // if (boost && boost.multiplier > 1.0 && boost.endTime > performance.now()) {
-    //   // ... (speedBoostDisplay update logic removed) ...
-    // } else {
-    //   speedBoostDisplay.style.display = 'none';
-    // }
-    // --- END REMOVE Speed Boost UI Update ---
-
-    requestAnimationFrame(updateUI);
-  }
-
-  // Start UI update loop
-  updateUI();
   
   // Add debug commands
   window.giveAmmo = (type = 'red', amount = 10) => { // Default to red
@@ -2175,5 +2137,42 @@ function initializePlayerUI() {
   improveTreeBounce()         // Apply better bounce physics for tree collisions
                               // Makes apples bounce realistically off tree trunks
   `);
+
+  // Add these debug functions to console help messages
+  console.log(`
+  // *****************************************
+  // ***** AMMO DEBUGGING COMMANDS *****
+  // *****************************************
+  checkAmmo()               // Show current ammo inventory 
+  giveAmmo('red', 10)       // Add 10 red apples
+  giveAmmo('yellow', 5)     // Add 5 yellow apples
+  giveAmmo('green', 2)      // Add 2 green apples
+  resetAmmoDisplay()        // Force refresh the ammo display
+  `);
+
+  // Add debug command to help check and fix ammo issues
+  window.checkAmmo = function() {
+    if (!player) return "No player available";
+    const ammoState = player.getWeaponState().ammo;
+    console.log("Current ammo inventory:", ammoState);
+    return ammoState;
+  };
+
+  window.resetAmmoDisplay = function() {
+    if (!player?.weaponSystem?._updateAmmoDisplay) {
+      return "Ammo display update function not available";
+    }
+    
+    // Force update both the display and model
+    player.weaponSystem._updateAmmoDisplay();
+    player.weaponSystem.updateModel();
+    
+    console.log("Ammo display and slingshot model forcibly updated");
+    return "Display reset complete";
+  };
+
 }
+
+// Call at startup
+setupDebugCommands();
 
