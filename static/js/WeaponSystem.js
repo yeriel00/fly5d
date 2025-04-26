@@ -16,202 +16,200 @@ export default class WeaponSystem {
     this.scene = scene;
     this.camera = camera;
     this.player = options.player || null; // Store player reference if provided
-    
+    // *** Store reference to player's ammo object ***
+    this.ammo = options.ammoSource || { red: 0, yellow: 0, green: 0 }; // Use source or default
+
     // Configure with defaults
     this.options = Object.assign({
-      projectileSpeed: 40,
+      // projectileSpeed: 40, // Base speed now comes from Player options
       gravity: 0.15,
       sphereRadius: 400,
       getTerrainHeight: null,
-      projectileRadius: 3.0,
-      launchOffset: 3.0,
+      projectileRadius: 0.8, // Use radius from Player options
+      launchOffset: 1.5, // Reduced offset
       chargeTime: 1.5, // Time in seconds to fully charge
-      collidables: null // Add collidables option to pass to ProjectileSystem
+      collidables: null
     }, options);
-    
+
     // Create projectile system with collidables
     this.projectileSystem = new ProjectileSystem(scene, {
-      projectileSpeed: this.options.projectileSpeed,
+      // projectileSpeed: this.options.projectileSpeed, // Speed determined on fire
       gravity: this.options.gravity,
       sphereRadius: this.options.sphereRadius,
       getTerrainHeight: this.options.getTerrainHeight,
       projectileRadius: this.options.projectileRadius,
-      collidables: this.options.collidables, // Pass collidables for collision detection
-      showCollisions: true // Enable visual collision effects
+      collidables: this.options.collidables,
+      showCollisions: true
     });
-    
-    // Setup initial state
-    this.ammo = {
-      apple: 0,
-      goldenApple: 0
-    };
-    
-    this.currentWeapon = 'slingshot'; // Default weapon
-    this.availableWeapons = ['slingshot', 'goldenSlingshot'];
-    
+
+    // *** Setup multi-ammo state ***
+    this.availableAmmoTypes = ['red', 'yellow', 'green'];
+    this.currentAmmoType = 'red'; // Default ammo type
+    // *** End multi-ammo state ***
+
     // Charging state
     this.isCharging = false;
     this.chargeStartTime = 0;
-    this.currentCharge = 0;
-    
+    this.chargeState = null; // Store power, elapsed, and ammoType
+
     // Setup weapon model
     this.setupModel(camera);
-    
-    console.log("Weapon system created");
+
+    console.log("Weapon system created with multi-ammo support");
   }
-  
+
   /**
    * Start charging the current weapon
    * @returns {boolean} Success
    */
   startCharging() {
-    // Check if we have ammo
-    const ammoType = this.currentWeapon === 'slingshot' ? 'apple' : 'goldenApple';
-    if (this.ammo[ammoType] <= 0) {
-      console.log("No ammo available for " + ammoType);
-      return false;
+    // *** Check ammo for the CURRENTLY SELECTED type ***
+    if (!this.ammo || this.ammo[this.currentAmmoType] <= 0) {
+      console.log(`[WeaponSystem] No ammo available for ${this.currentAmmoType}`);
+      this._playSound('empty', 0.6); // Play empty sound
+      this.isCharging = false; // Ensure charging stops if no ammo
+      this.chargeState = null;
+      this._updateModelAnimation('idle'); // Ensure model is idle
+      return false; // <<< IMPORTANT: Return false if no ammo
     }
-    
+    // *** End ammo check ***
+
+    // Only start if not already charging
+    if (this.isCharging) return false;
+
     this.isCharging = true;
     this.chargeStartTime = Date.now();
-    this.currentCharge = 0;
-    
-    // Log charging started
-    console.log(`Charging ${ammoType} weapon`);
-    
+    // *** Initialize chargeState with current ammo type ***
+    this.chargeState = {
+        power: 0,
+        elapsed: 0,
+        ammoType: this.currentAmmoType // Store the type being charged
+    };
+    // *** End initialize chargeState ***
+
+    console.log(`[WeaponSystem] Charging ${this.currentAmmoType} weapon`);
+    this._updateModelAnimation('charge'); // Trigger charge animation
+
     return true;
   }
-  
+
   /**
    * Cancel weapon charging (e.g. when mouse leaves window)
    */
   cancelCharge() {
     if (this.isCharging) {
       this.isCharging = false;
+      this.chargeState = null; // Clear charge state
+      this._updateModelAnimation('idle'); // Reset animation
       console.log("Weapon charge canceled");
     }
   }
-  
+
   /**
    * Get current charge state
    * @returns {Object} Charge information
    */
   getChargeState() {
-    if (!this.isCharging) return null;
-    
+    if (!this.isCharging || !this.chargeState) return null;
+
     const elapsed = (Date.now() - this.chargeStartTime) / 1000;
-    this.currentCharge = Math.min(elapsed / this.options.chargeTime, 1.0);
-    
-    // Store charge state so it can be accessed by getWeaponState
-    this.chargeState = {
-      power: this.currentCharge,
-      elapsed
-    };
-    
+    const power = Math.min(elapsed / this.options.chargeTime, 1.0);
+
+    // Update the existing chargeState object
+    this.chargeState.power = power;
+    this.chargeState.elapsed = elapsed;
+    // ammoType remains as it was when charging started
+
     return this.chargeState;
   }
-  
+
   /**
-   * Fire a projectile with the current charge
-   * @returns {Object|null} Result containing projectile info and power
+   * Release the weapon (called by Player)
+   * @returns {Object|null} Info about the charge state or null if failed
    */
-  fireProjectile() {
-    if (!this.isCharging) return null;
-    
-    const chargeState = this.getChargeState();
+  release() {
+    // Calculate charge state *before* checking
+    if (this.isCharging) {
+        this.getChargeState(); // Update this.chargeState
+    }
+
+    console.log("[WeaponSystem] release() called", {
+        isCharging: this.isCharging,
+        chargeStateExists: !!this.chargeState,
+        chargeStateValue: this.chargeState,
+        currentSelectedAmmo: this.currentAmmoType, // Log selected type
+        playerAmmo: this.ammo // Log player's ammo object reference
+    });
+
+    if (!this.isCharging || !this.chargeState) {
+      console.log("[WeaponSystem] release() failed: Not charging or chargeState missing.");
+      // Ensure state is reset even if release is called unexpectedly
+      this.isCharging = false;
+      this.chargeState = null;
+      this._updateModelAnimation('idle');
+      return null; // Not charging or no charge state
+    }
+
+    // Get data from the charge state established at startCharging
+    const power = this.chargeState.power;
+    const ammoType = this.chargeState.ammoType; // Type determined when charging started
+    const canFire = this.ammo && this.ammo[ammoType] > 0; // Check ammo *now*
+
+    console.log("[WeaponSystem] release() state:", {
+        power: power,
+        ammoType: ammoType, // The type that was charged
+        ammoAvailable: this.ammo ? this.ammo[ammoType] : 'N/A',
+        canFire: canFire
+    });
+
+    // Reset charging state regardless of whether we can fire
     this.isCharging = false;
-    
-    // Make sure we have ammo
-    const ammoType = this.currentWeapon === 'slingshot' ? 'apple' : 'goldenApple';
-    if (this.ammo[ammoType] <= 0) {
-      console.log("No ammo available");
-      return null;
+    this.chargeState = null; // Clear state after use
+    this._updateModelAnimation('idle');
+
+    if (canFire) {
+      this._playSound('fire', 0.8 + power * 0.2);
+      console.log(`[WeaponSystem] release() successful: Charged ${ammoType} with power ${power}.`);
+      // Return firing info (projectile creation happens in Player class)
+      return {
+        canFire: true,
+        power: power,
+        ammoType: ammoType // Return the type that was charged
+      };
+    } else {
+      this._playSound('empty', 0.6);
+      console.log(`[WeaponSystem] release() failed: No ammo for charged type ${ammoType} at time of release.`);
+      return {
+        canFire: false,
+        power: power, // Still return power/type even if no ammo
+        ammoType: ammoType
+      };
     }
-    
-    // Deduct ammo
-    this.ammo[ammoType]--;
-    
-    // Calculate power based on charge
-    const power = 0.3 + (chargeState.power * 0.7); // 30% minimum, 100% maximum
-    
-    // Get camera direction
-    const direction = new THREE.Vector3();
-    this.camera.getWorldDirection(direction);
-    
-    // Get launch position (slightly in front of camera)
-    const position = new THREE.Vector3();
-    this.camera.getWorldPosition(position);
-    position.add(direction.clone().multiplyScalar(this.options.launchOffset));
-    
-    // Create velocity vector
-    const speed = this.options.projectileSpeed * power;
-    const velocity = direction.clone().multiplyScalar(speed);
-    
-    // Create projectile
-    const projectile = this.projectileSystem.createProjectile(
-      position,
-      velocity,
-      ammoType
-    );
-    
-    return {
-      projectile,
-      power,
-      type: ammoType
-    };
   }
-  
+
   /**
-   * Switch to the next available weapon
-   * @returns {boolean} Whether weapon was switched
+   * Switch to the next available ammo type
+   * @returns {string} The new ammo type selected
    */
-  switchWeapon() {
-    const currentIndex = this.availableWeapons.indexOf(this.currentWeapon);
-    if (currentIndex === -1) return false;
-    
-    // Switch to next weapon with wrap-around
-    const nextIndex = (currentIndex + 1) % this.availableWeapons.length;
-    this.currentWeapon = this.availableWeapons[nextIndex];
-    
-    return true;
-  }
-  
-  /**
-   * Get current ammo amounts
-   * @returns {Object} Ammo by type
-   */
-  getAmmo() {
-    return { ...this.ammo };
-  }
-  
-  /**
-   * Set ammo amount for a specific type
-   * @param {string} type - Ammo type
-   * @param {number} amount - Amount to set
-   * @returns {number} New amount
-   */
-  setAmmo(type, amount) {
-    if (this.ammo[type] !== undefined) {
-      this.ammo[type] = Math.max(0, amount);
-      return this.ammo[type];
+  cycleAmmoType() {
+    if (!this.availableAmmoTypes || this.availableAmmoTypes.length === 0) return this.currentAmmoType;
+
+    const currentIndex = this.availableAmmoTypes.indexOf(this.currentAmmoType);
+    if (currentIndex === -1) { // Should not happen if initialized correctly
+        this.currentAmmoType = this.availableAmmoTypes[0];
+    } else {
+        const nextIndex = (currentIndex + 1) % this.availableAmmoTypes.length;
+        this.currentAmmoType = this.availableAmmoTypes[nextIndex];
     }
-    return 0;
-  }
-  
-  /**
-   * Add ammo to existing amount
-   * @param {string} type - Ammo type
-   * @param {number} amount - Amount to add
-   * @returns {number} New amount
-   */
-  addAmmo(type, amount) {
-    if (this.ammo[type] !== undefined) {
-      this.ammo[type] += Math.max(0, amount);
-      return this.ammo[type];
+
+    console.log(`[WeaponSystem] Switched ammo type to: ${this.currentAmmoType}`);
+    // If charging, cancel it when switching ammo
+    if (this.isCharging) {
+        this.cancelCharge();
     }
-    return 0;
+    return this.currentAmmoType;
   }
-  
+
   /**
    * Update the weapon system
    * @param {number} deltaTime - Time since last update in seconds
@@ -221,9 +219,12 @@ export default class WeaponSystem {
     if (this.projectileSystem) {
       this.projectileSystem.update(deltaTime);
     }
-    
-    // Update weapon model
+
+    // Update weapon model (handles charge animation)
     this.updateModel(deltaTime);
+
+    // Update TWEEN for animations if used
+    if (TWEEN) TWEEN.update();
   }
 
   /**
@@ -233,15 +234,16 @@ export default class WeaponSystem {
   getWeaponState() {
     // Update charge state if we're charging
     const chargeState = this.isCharging ? this.getChargeState() : null;
-    
+
     return {
-      currentWeapon: this.currentWeapon,
+      // *** Return currentAmmoType instead of currentWeapon ***
+      currentAmmoType: this.currentAmmoType,
+      // *** End Return ***
       isCharging: this.isCharging,
-      chargeState: chargeState,
-      ammo: {
-        apple: this.ammo.apple || 0,
-        goldenApple: this.ammo.goldenApple || 0
-      }
+      chargeState: chargeState, // Contains power, elapsed, and ammoType
+      // *** Return the reference to player's ammo ***
+      ammo: this.ammo
+      // *** End Return ***
     };
   }
 
@@ -251,240 +253,130 @@ export default class WeaponSystem {
    */
   setupModel(camera) {
     if (!camera) return;
-    
-    // Check for existing weapon model and remove it to prevent duplicates
-    if (this.weaponModel) {
-      camera.remove(this.weaponModel);
-    }
-    
-    // Create slingshot model
+
+    if (this.weaponModel) camera.remove(this.weaponModel);
+
     this.weaponModel = new THREE.Group();
-    
-    // Create basic slingshot shape - SLIMMER DIMENSIONS
-    const handleGeometry = new THREE.CylinderGeometry(0.06, 0.08, 0.6, 6); // Slimmer radius
+    // ... (slingshot handle/fork geometry - unchanged) ...
+    const handleGeometry = new THREE.CylinderGeometry(0.06, 0.08, 0.6, 6);
     const handleMaterial = new THREE.MeshLambertMaterial({ color: 0x8B4513 });
     const handle = new THREE.Mesh(handleGeometry, handleMaterial);
     handle.position.set(0, -0.3, 0);
     this.weaponModel.add(handle);
-    
-    // Add fork part - SLIMMER DIMENSIONS
-    const forkGeometry = new THREE.CylinderGeometry(0.05, 0.06, 0.35, 6); // Slimmer radius, shorter length
+    const forkGeometry = new THREE.CylinderGeometry(0.05, 0.06, 0.35, 6);
     const forkMaterial = new THREE.MeshLambertMaterial({ color: 0x8B4513 });
-    
     const leftFork = new THREE.Mesh(forkGeometry, forkMaterial);
-    leftFork.position.set(-0.12, 0, 0); // Closer to center
-    leftFork.rotation.z = Math.PI / 7; // Slightly less angle
+    leftFork.position.set(-0.12, 0, 0);
+    leftFork.rotation.z = Math.PI / 7;
     this.weaponModel.add(leftFork);
-    
     const rightFork = new THREE.Mesh(forkGeometry, forkMaterial);
-    rightFork.position.set(0.12, 0, 0); // Closer to center
-    rightFork.rotation.z = -Math.PI / 7; // Slightly less angle
+    rightFork.position.set(0.12, 0, 0);
+    rightFork.rotation.z = -Math.PI / 7;
     this.weaponModel.add(rightFork);
-    
-    // IMPROVED: Create separate elastic bands for left, right, and back
-    // These will be manipulated independently for proper stretching
-
-    // Left elastic band with THICKER line
-    const leftBandMaterial = new THREE.LineBasicMaterial({ 
-      color: 0x222222,
-      linewidth: 3
-    });
-    this.leftBand = new THREE.Line(new THREE.BufferGeometry(), leftBandMaterial);
-    
-    // Right elastic band with THICKER line
-    const rightBandMaterial = new THREE.LineBasicMaterial({ 
-      color: 0x222222,
-      linewidth: 3
-    });
-    this.rightBand = new THREE.Line(new THREE.BufferGeometry(), rightBandMaterial);
-
-    // Add bands to weapon model
-    this.weaponModel.add(this.leftBand);
-    this.weaponModel.add(this.rightBand);
-    
-    // ALTERNATIVE: Create tubular mesh bands that are visually thicker
-    const tubeDiameter = 0.01; // Diameter of the tube for bands
-    
-    // Left tubular band
-    const leftTubeMaterial = new THREE.MeshBasicMaterial({ color: 0x222222 });
-    this.leftTubeBand = new THREE.Mesh(
-      new THREE.TubeGeometry(
-        new THREE.LineCurve3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, 1)),
-        5, // Path segments
-        tubeDiameter, // Tube radius
-        6, // Tube segments
-        false // Closed
-      ),
-      leftTubeMaterial
-    );
+    // ... (band setup - unchanged) ...
+    const tubeDiameter = 0.01;
+    const tubeMaterial = new THREE.MeshBasicMaterial({ color: 0x222222 });
+    this.leftTubeBand = new THREE.Mesh(new THREE.TubeGeometry(new THREE.LineCurve3(new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,1)), 5, tubeDiameter, 6, false), tubeMaterial);
     this.weaponModel.add(this.leftTubeBand);
-    
-    // Right tubular band
-    const rightTubeMaterial = new THREE.MeshBasicMaterial({ color: 0x222222 });
-    this.rightTubeBand = new THREE.Mesh(
-      new THREE.TubeGeometry(
-        new THREE.LineCurve3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, 1)),
-        5, // Path segments
-        tubeDiameter, // Tube radius
-        6, // Tube segments
-        false // Closed
-      ),
-      rightTubeMaterial
-    );
+    this.rightTubeBand = new THREE.Mesh(new THREE.TubeGeometry(new THREE.LineCurve3(new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,1)), 5, tubeDiameter, 6, false), tubeMaterial);
     this.weaponModel.add(this.rightTubeBand);
-    
-    // FIXED: Store fork tip positions - ADJUSTED to make the bands appear visually correct
-    // Now the fork tips are at the front (negative Z)
-    this.leftForkTip = new THREE.Vector3(-0.12, 0.175, -0.05);  // Front of forks
-    this.rightForkTip = new THREE.Vector3(0.12, 0.175, -0.05);  // Front of forks
-    this.pocketPosition = new THREE.Vector3(0, 0, 0.15);        // Behind the slingshot
-    
-    // Update band positions initially
+    this.leftForkTip = new THREE.Vector3(-0.12, 0.175, -0.05);
+    this.rightForkTip = new THREE.Vector3(0.12, 0.175, -0.05);
+    this.pocketPosition = new THREE.Vector3(0, 0, 0.15);
     this._updateBands(this.pocketPosition);
-    
-    // Create and store the apple model that will appear when charging
+
+
+    // *** Create and store models for each ammo type ***
     this.projectileModels = {
-      apple: this._createAppleModel(),
-      goldenApple: this._createGoldenAppleModel()
+      red: this._createRedAppleModel(),
+      yellow: this._createYellowAppleModel(),
+      green: this._createGreenAppleModel()
     };
-    
+    // *** End create models ***
+
     // Projectile is hidden initially
     this.activeProjectileModel = null;
-    
-    // Position slingshot in camera view - ADJUSTED positioning and rotation
+
+    // ... (positioning and adding model to camera - unchanged) ...
     this.weaponModel.position.set(0.25, -0.3, -0.7);
-    
-    // ADJUSTED: Changed rotation to point more at 12 o'clock instead of 11 o'clock
-    // Original: this.weaponModel.rotation.set(0, Math.PI * 0.2, -Math.PI * 0.08);
-    this.weaponModel.rotation.set(0, Math.PI * 0.05, -Math.PI * 0.08); // Reduced Y rotation from 0.2π to 0.05π
-    
-    // Add to camera so it moves with view
+    this.weaponModel.rotation.set(0, Math.PI * 0.05, -Math.PI * 0.08);
     camera.add(this.weaponModel);
-    
-    // Store initial position/rotation for animations
     this.initialWeaponPosition = this.weaponModel.position.clone();
     this.initialWeaponRotation = this.weaponModel.rotation.clone();
-    
-    console.log("Improved slingshot model created and attached to camera");
+
+    console.log("Slingshot model created with multi-ammo projectile placeholders.");
   }
 
-  /**
-   * Create a model for a regular apple
-   * @returns {THREE.Group} The apple model
-   * @private
-   */
-  _createAppleModel() {
+  /** Create a model for a regular red apple */
+  _createRedAppleModel() {
     const appleGroup = new THREE.Group();
-    
-    // Apple body
     const appleGeometry = new THREE.SphereGeometry(0.1, 12, 12);
     const appleMaterial = new THREE.MeshLambertMaterial({ color: 0xff2200 });
     const apple = new THREE.Mesh(appleGeometry, appleMaterial);
     appleGroup.add(apple);
-    
-    // Stem
     const stemGeometry = new THREE.CylinderGeometry(0.01, 0.01, 0.05, 4);
     const stemMaterial = new THREE.MeshLambertMaterial({ color: 0x553311 });
     const stem = new THREE.Mesh(stemGeometry, stemMaterial);
     stem.position.set(0, 0.08, 0);
     appleGroup.add(stem);
-    
-    appleGroup.visible = false;
-    
+    appleGroup.visible = false; // Start hidden
     return appleGroup;
   }
 
-  /**
-   * Create a model for a golden apple
-   * @returns {THREE.Group} The golden apple model
-   * @private
-   */
-  _createGoldenAppleModel() {
+  /** Create a model for a yellow apple */
+  _createYellowAppleModel() {
     const appleGroup = new THREE.Group();
-    
-    // Apple body
     const appleGeometry = new THREE.SphereGeometry(0.1, 12, 12);
-    const appleMaterial = new THREE.MeshLambertMaterial({ 
-      color: 0xffdd00,
-      emissive: 0x443300
-    });
+    const appleMaterial = new THREE.MeshLambertMaterial({ color: 0xffdd00, emissive: 0x443300 });
     const apple = new THREE.Mesh(appleGeometry, appleMaterial);
     appleGroup.add(apple);
-    
-    // Stem
     const stemGeometry = new THREE.CylinderGeometry(0.01, 0.01, 0.05, 4);
     const stemMaterial = new THREE.MeshLambertMaterial({ color: 0x553311 });
     const stem = new THREE.Mesh(stemGeometry, stemMaterial);
     stem.position.set(0, 0.08, 0);
     appleGroup.add(stem);
-    
-    // Add glow for golden apple
+    // Add subtle glow
     const glowGeometry = new THREE.SphereGeometry(0.12, 12, 12);
-    const glowMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffff00,
-      transparent: true,
-      opacity: 0.2,
-      side: THREE.BackSide
-    });
+    const glowMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.15, side: THREE.BackSide });
     const glow = new THREE.Mesh(glowGeometry, glowMaterial);
     appleGroup.add(glow);
-    
-    appleGroup.visible = false;
-    
+    appleGroup.visible = false; // Start hidden
     return appleGroup;
   }
 
-  /**
-   * Update elastic bands to connect to the pocket position
-   * @param {THREE.Vector3} pocketPos - Position of the elastic pocket
-   * @private
-   */
-  _updateBands(pocketPos) {
-    // Update line-based bands (fallback for older browsers)
-    // Update left band vertices
-    const leftBandPoints = [
-      this.leftForkTip.clone(),
-      pocketPos.clone()
-    ];
-    this.leftBand.geometry.dispose();
-    this.leftBand.geometry = new THREE.BufferGeometry().setFromPoints(leftBandPoints);
-    
-    // Update right band vertices
-    const rightBandPoints = [
-      this.rightForkTip.clone(),
-      pocketPos.clone()
-    ];
-    this.rightBand.geometry.dispose();
-    this.rightBand.geometry = new THREE.BufferGeometry().setFromPoints(rightBandPoints);
-    
-    // Update tubular mesh bands (visually thicker)
-    // Create new tube geometry for left band
-    if (this.leftTubeBand.geometry) this.leftTubeBand.geometry.dispose();
-    const leftCurve = new THREE.LineCurve3(this.leftForkTip.clone(), pocketPos.clone());
-    this.leftTubeBand.geometry = new THREE.TubeGeometry(
-      leftCurve,
-      5, // Path segments
-      0.01, // Tube radius
-      6, // Tube segments
-      false // Closed
-    );
-    
-    // Create new tube geometry for right band
-    if (this.rightTubeBand.geometry) this.rightTubeBand.geometry.dispose();
-    const rightCurve = new THREE.LineCurve3(this.rightForkTip.clone(), pocketPos.clone());
-    this.rightTubeBand.geometry = new THREE.TubeGeometry(
-      rightCurve,
-      5, // Path segments
-      0.01, // Tube radius
-      6, // Tube segments
-      false // Closed
-    );
+  /** Create a model for a green apple */
+  _createGreenAppleModel() {
+    const appleGroup = new THREE.Group();
+    const appleGeometry = new THREE.SphereGeometry(0.1, 12, 12);
+    const appleMaterial = new THREE.MeshLambertMaterial({ color: 0x33ff33, emissive: 0x114411 });
+    const apple = new THREE.Mesh(appleGeometry, appleMaterial);
+    appleGroup.add(apple);
+    const stemGeometry = new THREE.CylinderGeometry(0.01, 0.01, 0.05, 4);
+    const stemMaterial = new THREE.MeshLambertMaterial({ color: 0x553311 });
+    const stem = new THREE.Mesh(stemGeometry, stemMaterial);
+    stem.position.set(0, 0.08, 0);
+    appleGroup.add(stem);
+     // Add subtle glow
+    const glowGeometry = new THREE.SphereGeometry(0.12, 12, 12);
+    const glowMaterial = new THREE.MeshBasicMaterial({ color: 0x88ff88, transparent: true, opacity: 0.2, side: THREE.BackSide });
+    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+    appleGroup.add(glow);
+    appleGroup.visible = false; // Start hidden
+    return appleGroup;
   }
 
-  /**
-   * Remove the slingshot model from camera
-   * (Helpful for cleanup and preventing duplicates)
-   */
+  /** Update elastic bands */
+  _updateBands(pocketPos) {
+    // ... (band update logic - unchanged) ...
+    if (this.leftTubeBand.geometry) this.leftTubeBand.geometry.dispose();
+    const leftCurve = new THREE.LineCurve3(this.leftForkTip.clone(), pocketPos.clone());
+    this.leftTubeBand.geometry = new THREE.TubeGeometry(leftCurve, 5, 0.01, 6, false);
+    if (this.rightTubeBand.geometry) this.rightTubeBand.geometry.dispose();
+    const rightCurve = new THREE.LineCurve3(this.rightForkTip.clone(), pocketPos.clone());
+    this.rightTubeBand.geometry = new THREE.TubeGeometry(rightCurve, 5, 0.01, 6, false);
+  }
+
+  /** Remove the slingshot model */
   removeModel() {
     if (this.weaponModel && this.camera) {
       this.camera.remove(this.weaponModel);
@@ -492,69 +384,76 @@ export default class WeaponSystem {
     }
   }
 
-  /**
-   * Update the weapon model based on current state
-   * @param {number} deltaTime - Time since last update
-   */
+  /** Update the weapon model based on current state */
   updateModel(deltaTime) {
     if (!this.weaponModel) return;
-    
+
     // Handle charging animation
-    if (this.isCharging) {
-      // Get charge amount (0 to 1)
-      const charge = this.getChargeState()?.power || 0;
-      
-      // FIXED: Pull back the pocket position correctly (positive Z is away from player)
+    if (this.isCharging && this.chargeState) {
+      const charge = this.chargeState.power;
       const pullBackDistance = 0.3 * charge;
-      const pocketPosition = new THREE.Vector3(0, 0, 0.15 + pullBackDistance); // Further behind
-      
-      // Update band vertices to connect to the pulled-back pocket
+      const pocketPosition = new THREE.Vector3(0, 0, 0.15 + pullBackDistance);
       this._updateBands(pocketPosition);
-      
-      // Show the appropriate projectile
-      const ammoType = this.currentWeapon === 'slingshot' ? 'apple' : 'goldenApple';
-      
-      // Show the projectile if we haven't already
-      if (!this.activeProjectileModel) {
-        this.activeProjectileModel = this.projectileModels[ammoType];
-        this.weaponModel.add(this.activeProjectileModel);
-        this.activeProjectileModel.visible = true;
+
+      // *** Show the correct projectile model based on chargeState ***
+      const ammoType = this.chargeState.ammoType;
+      const modelToShow = this.projectileModels[ammoType];
+
+      // Switch model if necessary or if none is active
+      if (modelToShow && this.activeProjectileModel !== modelToShow) {
+          // Hide previous model if there was one
+          if (this.activeProjectileModel) {
+              this.activeProjectileModel.visible = false;
+              this.weaponModel.remove(this.activeProjectileModel); // Remove from group
+          }
+          // Add and show the new model
+          this.activeProjectileModel = modelToShow;
+          this.weaponModel.add(this.activeProjectileModel); // Add to group
+          this.activeProjectileModel.visible = true;
       }
-      
-      // Move projectile with the pocket (at the band intersection)
-      this.activeProjectileModel.position.copy(pocketPosition);
+
+      // Move the active projectile model with the pocket
+      if (this.activeProjectileModel) {
+        this.activeProjectileModel.position.copy(pocketPosition);
+      }
+      // *** End show correct model ***
+
     } else {
-      // Return bands to original position
-      const restingPocketPos = new THREE.Vector3(0, 0, 0.15); // Default behind position
+      // Not charging: Return bands to original position
+      const restingPocketPos = new THREE.Vector3(0, 0, 0.15);
       this._updateBands(restingPocketPos);
-      
-      // Hide the projectile if it's visible
+
+      // Hide the active projectile model if it's visible
       if (this.activeProjectileModel) {
         this.activeProjectileModel.visible = false;
-        this.activeProjectileModel = null;
+        // Don't remove from group here, just hide. It will be removed/swapped if charging starts again.
+        this.activeProjectileModel = null; // Clear the reference
       }
     }
-    
-    // Add subtle idle animation
+
+    // ... (idle animation - unchanged) ...
     const time = Date.now() / 1000;
     const idleAmount = Math.sin(time * 2) * 0.01;
     this.weaponModel.position.y = this.initialWeaponPosition.y + idleAmount;
     this.weaponModel.rotation.x = this.initialWeaponRotation.x + idleAmount * 0.1;
   }
 
-  /**
-   * Release the weapon and fire the projectile
-   */
-  release() {
-    // Simply call fireProjectile() without the extra checks
-    return this.fireProjectile();
-  }
-
-  /**
-   * Provide a method for the Player class to provide itself as a reference
-   * @param {Object} player - The player object
-   */
+  /** Provide a method for the Player class to provide itself as a reference */
   setPlayer(player) {
     this.player = player;
+    // *** Update ammo reference if player is set later ***
+    if (player && player.ammo) {
+        this.ammo = player.ammo;
+    }
+    // *** End update ammo reference ***
   }
+
+  // --- Placeholder methods for sounds/animations ---
+  _updateModelAnimation(state) { /* Placeholder */ }
+  _playSound(soundName, volume = 1.0) {
+    if (window.game && window.game.audio) {
+        window.game.audio.playSound(soundName, volume);
+    }
+  }
+  // --- End Placeholders ---
 }

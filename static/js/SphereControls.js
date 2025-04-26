@@ -110,7 +110,8 @@ export default class SphereControls {
     this.options = Object.assign({
       crouchHeight: 0.5, // Height multiplier when crouching (50% of normal height)
       crouchSpeedMultiplier: 0.7, // Movement is 70% speed when crouching
-      crouchTransitionTime: 0.2 // Seconds to transition to/from crouch
+      crouchTransitionTime: 0.2, // Seconds to transition to/from crouch
+      getSpeedMultiplier: () => 1.0 // Default function returns 1x speed
     }, options);
 
     // Add crouch state properties
@@ -337,10 +338,15 @@ export default class SphereControls {
     }
     
     // Apply movement forces
+    const speedMultiplier = this.options.getSpeedMultiplier();
+    const effectiveMoveSpeed = this.options.moveSpeed * speedMultiplier;
+    const effectiveMaxGroundSpeed = this.options.maxGroundSpeed * speedMultiplier;
+    const effectiveMaxAirSpeed = this.options.maxAirSpeed * speedMultiplier;
+
     if (worldMoveDir) {
       if (this.onGround) {
         // Direct control on ground
-        const groundControl = worldMoveDir.clone().multiplyScalar(this.moveSpeed * 2.0);
+        const groundControl = worldMoveDir.clone().multiplyScalar(effectiveMoveSpeed * 2.0);
         
         // Split velocity into horizontal and vertical components
         const upDir = playerUp.clone();
@@ -361,8 +367,8 @@ export default class SphereControls {
         horizontalVel.add(steeringForce);
         
         // Limit horizontal speed
-        if (horizontalVel.length() > this.maxAirSpeed) {
-          horizontalVel.normalize().multiplyScalar(this.maxAirSpeed);
+        if (horizontalVel.length() > effectiveMaxAirSpeed) {
+          horizontalVel.normalize().multiplyScalar(effectiveMaxAirSpeed);
         }
         
         // Recombine without affecting vertical velocity

@@ -13,22 +13,26 @@ export default class AppleSystem {
   constructor(scene, options = {}) {
     this.scene = scene;
     this.options = Object.assign({
-      maxApplesPerTree: 4,        // REDUCED from 8 to 4 for performance
-      growthTime: 60,             // Slower growth for better performance
-      growthProbability: 0.03,    // REDUCED growth probability for fewer apples
-      fallProbability: 0.005,     // REDUCED fall probability
-      appleMass: 1.0,             
-      gravity: 0.15,              
-      appleRadius: 3.0,           // Keep size matching projectiles
-      appleSegments: 8,           // REDUCED geometry complexity from 12 to 8
-      appleValue: 1,             
-      goldenAppleProbability: 0.1,
-      goldenAppleValue: 3,        
-      groundLifetime: 60,         
-      sphereRadius: 400,         
-      getTerrainHeight: null,     
-      onAppleCollected: null,
-      performanceMode: true       // NEW: Enable performance optimizations
+      maxApplesPerTree: 6, // Increased slightly
+      growthTime: 10,      // Grow in 10 seconds (was 45)
+      growthProbability: 0.25, // 25% chance per second to start growing (was 0.04)
+      fallProbability: 0.15,  // 15% chance per second for ripe apple to fall (was 0.008)
+      appleMass: 1.0,
+      gravity: 0.15,
+      appleRadius: 2.5, // Slightly smaller apples
+      appleSegments: 6, // Further reduced segments
+      // --- Apple Type Config ---
+      appleTypes: {
+        red:    { value: 1, probability: 0.75, effectMultiplier: 1.0, color: 0xff2200, unripeColor: 0xaa4433 },
+        yellow: { value: 2, probability: 0.20, effectMultiplier: 1.5, color: 0xffdd00, unripeColor: 0xcccc44 },
+        green:  { value: 3, probability: 0.05, effectMultiplier: 2.0, color: 0x33ff33, unripeColor: 0x44aa44 }
+      },
+      // --- End Apple Type Config ---
+      groundLifetime: 6000, // Disappear after 60 seconds on ground (was 90)
+      sphereRadius: 800,
+      getTerrainHeight: null,
+      onAppleCollected: null, // Callback signature: (type, value, effectMultiplier, position)
+      performanceMode: false      // Start with performance mode OFF for debugging
     }, options);
 
     // Collection of all apple trees in the scene
@@ -41,7 +45,10 @@ export default class AppleSystem {
     this.growthPoints = {};
     
     // Apple materials
-    this._initMaterials();
+    this.appleMaterials = {}; // Store materials by type
+    this.unripeAppleMaterials = {}; // Store unripe materials by type
+
+    this._initMaterials(); // Initialize materials based on appleTypes
     
     // Count collections by the player
     this.stats = {
@@ -63,6 +70,11 @@ export default class AppleSystem {
     setTimeout(() => {
       this.findAppleTrees();
     }, 1000); // Delay apple system initialization by 1 second
+
+    this.lowPerformanceMode = this.options.performanceMode; // Sync with option
+
+    // REMOVE immediate call - will be called externally after trees exist
+    // this.findAppleTrees();
   }
   
   /**
@@ -70,43 +82,101 @@ export default class AppleSystem {
    * @private
    */
   _initMaterials() {
-    // Regular apple material - simplified for performance
-    this.appleMaterial = new THREE.MeshLambertMaterial({
-      color: 0xff2200,
-      emissive: 0x440000
-    });
-    
-    // Golden apple material - simplified for performance
-    this.goldenAppleMaterial = new THREE.MeshLambertMaterial({
-      color: 0xffdd00,
-      emissive: 0x443300
-    });
-    
-    // Unripe apple material - simplified for performance
-    this.unripeAppleMaterial = new THREE.MeshLambertMaterial({
-      color: 0x44cc22
-    });
+    for (const type in this.options.appleTypes) {
+      const config = this.options.appleTypes[type];
+      this.appleMaterials[type] = new THREE.MeshLambertMaterial({
+        color: config.color,
+        emissive: new THREE.Color(config.color).multiplyScalar(0.2) // Dim emissive
+      });
+      this.unripeAppleMaterials[type] = new THREE.MeshLambertMaterial({
+        color: config.unripeColor
+      });
+    }
+    // Fallback (shouldn't be needed)
+    this.appleMaterial = this.appleMaterials.red;
+    this.unripeAppleMaterial = this.unripeAppleMaterials.red;
   }
   
   /**
    * Find all apple trees in the scene
    */
   findAppleTrees() {
-    // Clear current list
+    // console.log("[AppleSystem] Starting findAppleTrees...");
     this.appleTrees = [];
-    
-    // Find all apple trees in scene
+    this.growthPoints = {};
+
+    let traversedCount = 0;
+    let meshCount = 0;
+    let groupCount = 0;
+    let potentialTreeCount = 0;
+
     this.scene.traverse(object => {
-      // Check if this is an apple tree (not pine tree)
-      if (object.userData && object.userData.isTree && !object.userData.isPineTree) {
-        this.appleTrees.push(object);
-        
-        // Generate growth points on this tree
-        this._generateGrowthPoints(object);
+      traversedCount++;
+
+      // Check if the object is a Group named "AppleTree"
+      if (object.isGroup && object.name === "AppleTree") {
+        groupCount++;
+        // console.log(`[AppleSystem] Traversing Group: ID=${object.id}, Name=${object.name}, userData=`, object.userData);
+
+        // Check the Group's userData directly
+        const isTree = object.userData?.isTree;
+        // Pine trees are also groups, so check their specific flag
+        const isPine = object.userData?.isPineTree;
+
+        // console.log(`  -> Group Check: isTree: ${isTree}, isPine: ${isPine}`);
+
+        if (isTree && !isPine) {
+          potentialTreeCount++;
+        //   console.log(`  -> MATCHED Group as potential apple tree!`);
+
+          // Use the group itself as the tree object
+          const treeObject = object;
+
+          // Try to find corresponding data in collidables (where .mesh is the Group)
+          const collidableData = window.collidables?.find(c => c.mesh === treeObject);
+
+          let treeData;
+          if (collidableData) {
+            // console.log(`[AppleSystem] Found collidable data for Group ${treeObject.id}`);
+            treeData = collidableData;
+          } else {
+            // Fallback: Estimate data if not found in collidables (less reliable)
+            // console.warn(`[AppleSystem] Tree Group ${treeObject.id} (${treeObject.name}) not found in collidables. Estimating data.`);
+            const box = new THREE.Box3().setFromObject(treeObject);
+            const size = new THREE.Vector3();
+            box.getSize(size);
+            treeData = {
+              position: treeObject.position.clone(),
+              direction: treeObject.position.clone().normalize(), // Assumes group is placed correctly
+              radius: Math.max(size.x, size.z) / 2 || 15,
+              collisionHeight: size.y || 40,
+              mesh: treeObject // Ensure mesh property points to the group
+            };
+          }
+
+          // Check if this group has already been added
+          const alreadyAdded = this.appleTrees.some(t => t.id === treeObject.id);
+        //   console.log(`  -> Already added: ${alreadyAdded}`);
+
+          if (!alreadyAdded) {
+            // console.log(`[AppleSystem] ADDING Apple Tree Group: ID=${treeObject.id}, Name=${treeObject.name}`);
+            // Ensure collidableData is stored on the group's userData for _generateGrowthPoints
+            treeObject.userData.collidableData = treeData;
+            this.appleTrees.push(treeObject);
+            this._generateGrowthPoints(treeObject); // Pass the group
+          }
+        }
+      } else if (object.isMesh) {
+        meshCount++;
+        // Optional: Log meshes if needed for debugging other issues
+        // console.log(`[AppleSystem] Traversing Mesh: ID=${object.id}, Name=${object.name}`);
       }
     });
-    
-    console.log(`Found ${this.appleTrees.length} apple trees for growing apples`);
+
+    // console.log(`[AppleSystem] findAppleTrees finished. Traversed: ${traversedCount}, Groups: ${groupCount}, Meshes: ${meshCount}, Potential Trees: ${potentialTreeCount}, Found: ${this.appleTrees.length}`);
+    let totalPoints = 0;
+    Object.values(this.growthPoints).forEach(points => totalPoints += points.length);
+    // console.log(`[AppleSystem] Generated ${totalPoints} total growth points.`);
   }
   
   /**
@@ -114,109 +184,89 @@ export default class AppleSystem {
    * @param {THREE.Object3D} tree - The tree object
    * @private
    */
-  _generateGrowthPoints(tree) {
-    // Create unique ID for this tree
-    const treeId = tree.id || Math.random().toString(36).substr(2, 9);
-    
-    // Get tree trunk and find branches - assuming a specific structure
-    // where the tree has a trunk and foliage/branches as children
-    const trunkPosition = tree.position.clone();
-    
-    // Find the "up" direction for this tree (from center of planet)
-    const upDirection = trunkPosition.clone().normalize();
-    
-    // Find foliage positions - usually these are spheres at the top of the trunk
-    const foliage = [];
-    tree.traverse(child => {
-      // Check for foliage parts
-      if (child.isMesh && child !== tree) {
-        // Check if this is a leaf/foliage part (usually these are spheres)
-        if (child.geometry instanceof THREE.SphereGeometry || 
-            child.geometry instanceof THREE.IcosahedronGeometry ||
-            (child.name && child.name.toLowerCase().includes('leaf'))) {
-          foliage.push(child);
-        }
+  _generateGrowthPoints(treeGroup) { // treeGroup is the THREE.Group
+    const treeId = treeGroup.id;
+    if (this.growthPoints[treeId]) return;
+
+    const points = [];
+    const worldPos = new THREE.Vector3();
+    const foliageMeshes = [];
+
+    // Find foliage meshes within the group
+    treeGroup.traverse(child => {
+      // Identify foliage by geometry type (SphereGeometry used in LowPolyGenerator)
+      if (child.isMesh && child.geometry instanceof THREE.SphereGeometry) {
+        foliageMeshes.push(child);
       }
     });
-    
-    // If we can't find foliage, use the tree itself
-    if (foliage.length === 0) {
-      // For low-poly trees with single mesh, create points around the top
-      const treeHeight = tree.geometry ? tree.geometry.boundingSphere.radius * 2 : 10;
-      const foliageCenter = trunkPosition.clone().add(upDirection.clone().multiplyScalar(treeHeight * 0.8));
-      
-      // Create points in a spherical pattern around the top
-      const points = [];
-      const radius = treeHeight * 0.4; // Size of the foliage sphere
-      const count = this.options.maxApplesPerTree;
-      
-      for (let i = 0; i < count; i++) {
-        // Create point on sphere surface with random distribution
-        const point = new THREE.Vector3(
-          (Math.random() - 0.5) * 2,
-          (Math.random() - 0.5) * 2,
-          (Math.random() - 0.5) * 2
-        ).normalize().multiplyScalar(radius).add(foliageCenter);
-        
-        points.push({
-          position: point,
-          normal: point.clone().sub(trunkPosition).normalize(),
-          hasApple: false,
-          apple: null,
-          growthProgress: 0,
-          growthDirection: upDirection.clone(),
-          growthRate: 0.5 + Math.random() * 0.5 // Random growth rate variation
-        });
-      }
-      
-      this.growthPoints[treeId] = points;
-    } else {
-      // For trees with separate foliage meshes, use those positions
-      const points = [];
-      
-      foliage.forEach(leaf => {
-        // Get world position of the leaf
-        const leafPosition = new THREE.Vector3();
-        leaf.getWorldPosition(leafPosition);
-        
-        // Create multiple points per foliage element
-        const count = Math.max(1, Math.floor(this.options.maxApplesPerTree / foliage.length));
-        
-        for (let i = 0; i < count; i++) {
-          // Create point just outside the foliage radius
-          const direction = new THREE.Vector3(
-            (Math.random() - 0.5) * 2,
-            (Math.random() - 0.5) * 2,
-            (Math.random() - 0.5) * 2
-          ).normalize();
-          
-          // Get foliage radius (approximately)
-          const radius = leaf.geometry ? 
-                         leaf.geometry.boundingSphere?.radius || 5 : 5;
-          
-          const point = leafPosition.clone().add(
-            direction.multiplyScalar(radius * 0.9)
-          );
-          
-          // Get normal direction (pointing away from tree center)
-          const normal = point.clone().sub(trunkPosition).normalize();
-          
-          points.push({
-            position: point,
-            normal: normal,
-            hasApple: false,
-            apple: null,
-            growthProgress: 0,
-            growthDirection: normal.clone(),
-            growthRate: 0.5 + Math.random() * 0.5 // Random growth rate variation
-          });
-        }
-      });
-      
-      this.growthPoints[treeId] = points;
+
+    if (foliageMeshes.length === 0) {
+      console.warn(`[AppleSystem] No foliage meshes found in Tree Group ${treeId}. Cannot generate growth points.`);
+      this.growthPoints[treeId] = []; // Ensure entry exists even if empty
+      return;
     }
-    
-    console.log(`Generated ${this.growthPoints[treeId].length} growth points for tree ${treeId}`);
+
+    // console.log(`[AppleSystem] Found ${foliageMeshes.length} foliage meshes for tree ${treeId}.`);
+
+    const pointsPerFoliage = Math.max(1, Math.floor(this.options.maxApplesPerTree / foliageMeshes.length));
+    const totalPointsToGenerate = this.options.maxApplesPerTree;
+    let generatedPoints = 0;
+
+    // Distribute points across foliage meshes
+    for (const foliageMesh of foliageMeshes) {
+        // Get world transform of the foliage mesh
+        foliageMesh.getWorldPosition(worldPos); // Center of the foliage sphere in world space
+        const foliageWorldRadius = foliageMesh.geometry.parameters.radius * foliageMesh.getWorldScale(new THREE.Vector3()).x; // Approx world radius
+
+        const countForThisFoliage = Math.min(pointsPerFoliage, totalPointsToGenerate - generatedPoints);
+
+        for (let i = 0; i < countForThisFoliage; i++) {
+            // Generate a random direction vector
+            const randomDir = new THREE.Vector3(
+                Math.random() - 0.5,
+                Math.random() - 0.5,
+                Math.random() - 0.5
+            ).normalize();
+
+            // Calculate the point on the surface of this foliage sphere in world space
+            const pointPos = worldPos.clone().addScaledVector(randomDir, foliageWorldRadius);
+
+            // Normal points outwards from the foliage center (same as randomDir)
+            const normal = randomDir.clone();
+
+            points.push({
+                position: pointPos, // World space position
+                normal: normal,     // World space normal
+                treeGroup: treeGroup, // Reference back to the parent tree group
+                hasApple: false,
+                apple: null,
+                growthProgress: 0,
+                appleType: 'red', // Default, will be set in _startNewApple
+                effectMultiplier: 1.0, // Default
+                growthRate: 0.8 + Math.random() * 0.4
+            });
+            generatedPoints++;
+        }
+        if (generatedPoints >= totalPointsToGenerate) break;
+    }
+
+     // If we didn't generate enough points (e.g., few foliage meshes), add remaining to the first one
+     if (generatedPoints < totalPointsToGenerate && foliageMeshes.length > 0) {
+        const firstFoliage = foliageMeshes[0];
+        firstFoliage.getWorldPosition(worldPos);
+        const foliageWorldRadius = firstFoliage.geometry.parameters.radius * firstFoliage.getWorldScale(new THREE.Vector3()).x;
+        for (let i = generatedPoints; i < totalPointsToGenerate; i++) {
+             const randomDir = new THREE.Vector3( /* ... */ ).normalize();
+             const pointPos = worldPos.clone().addScaledVector(randomDir, foliageWorldRadius);
+             const normal = randomDir.clone();
+             points.push({ /* ... point data ... */ });
+             generatedPoints++;
+        }
+     }
+
+
+    this.growthPoints[treeId] = points;
+    // console.log(`[AppleSystem] Generated ${points.length} growth points for tree group ${treeId}`);
   }
   
   /**
@@ -225,53 +275,51 @@ export default class AppleSystem {
    * @param {THREE.Vector3} playerPosition - Current player position
    */
   update(deltaTime, playerPosition) {
-    // Increment update counter for throttling
     this.updateCounter++;
-    
-    // Limit TWEEN updates to once every 100ms (10fps) to improve performance
-    const now = Date.now();
-    if (now - this.lastTweenUpdate > 100) {
-      // Update TWEEN but with a heavy rate limit
-      if (TWEEN) {
-        TWEEN.update();
-      }
-      this.lastTweenUpdate = now;
-    }
-    
-    // EXTREME PERFORMANCE MODE: Skip most updates most of the time
+
+    // --- Temporarily Reduced Throttling for Debugging ---
+    const effectiveDeltaTime = deltaTime; // Use actual delta time
+    const runGrowthUpdate = true; // Always run growth
+    const runNewAppleCheck = (this.updateCounter % 5 === 0); // Check every 5 frames
+    const runDropCheck = (this.updateCounter % 10 === 0); // Check every 10 frames
+    // --- End Reduced Throttling ---
+
+    /* // Original Performance Throttling (Restore later)
     if (this.options.performanceMode) {
-      // Only process apples every 4th frame
       if (this.updateCounter % 4 !== 0) {
-        // On other frames, only check for collection if player is near
         if (playerPosition && this.updateCounter % 2 === 0) {
           this._checkAppleCollection(playerPosition);
         }
-        return; // Skip rest of update
+        return;
       }
-      
-      // When we do update, use larger delta to compensate for skipped frames
       deltaTime *= 4;
     }
-    
-    // Process apple growth - but only occasionally
-    if (this.updateCounter % 2 === 0) {
-      this._updateGrowingApples(deltaTime);
+    const effectiveDeltaTime = deltaTime;
+    const runGrowthUpdate = (this.updateCounter % 2 === 0);
+    const runNewAppleCheck = (this.updateCounter % 20 === 0);
+    const runDropCheck = (this.updateCounter % 30 === 0);
+    */
+
+    // Limit TWEEN updates (keep this)
+    const now = Date.now();
+    if (now - this.lastTweenUpdate > (this.lowPerformanceMode ? 100 : 50)) {
+      if (TWEEN) TWEEN.update();
+      this.lastTweenUpdate = now;
     }
-    
-    // Process apple falling
-    this._updateFallingApples(deltaTime);
-    
-    // Check for new apple growth - heavily throttled
-    if (this.updateCounter % 20 === 0) { // Only every 20th frame
-      this._tryStartNewApples(deltaTime * 10); // Compensate for reduced frequency
+
+    // Process updates based on (reduced) throttling
+    if (runGrowthUpdate) {
+      this._updateGrowingApples(effectiveDeltaTime);
     }
-    
-    // Check for apples that should fall - heavily throttled
-    if (this.updateCounter % 30 === 0) { // Only every 30th frame
-      this._tryDropApples(deltaTime * 10); // Compensate for reduced frequency
+    this._updateFallingApples(effectiveDeltaTime); // Update falling always
+
+    if (runNewAppleCheck) {
+      this._tryStartNewApples(effectiveDeltaTime * (this.updateCounter % 5 === 0 ? 5 : 1)); // Adjust delta multiplier
     }
-    
-    // Check for apple collection
+    if (runDropCheck) {
+      this._tryDropApples(effectiveDeltaTime * (this.updateCounter % 10 === 0 ? 10 : 1)); // Adjust delta multiplier
+    }
+
     if (playerPosition) {
       this._checkAppleCollection(playerPosition);
     }
@@ -332,51 +380,47 @@ export default class AppleSystem {
    * @private
    */
   _updateGrowingApples(deltaTime) {
-    // Update all growth points
+    let updatedCount = 0;
     Object.values(this.growthPoints).forEach(points => {
       points.forEach(point => {
-        // Skip points without growing apples
         if (!point.hasApple || point.growthProgress >= 1.0) return;
-        
-        // Update growth progress
+
         point.growthProgress += (deltaTime / this.options.growthTime) * point.growthRate;
-        
-        // Clamp progress
         point.growthProgress = Math.min(1.0, point.growthProgress);
-        
-        // Update apple appearance based on growth
+        updatedCount++;
+
         if (point.apple) {
-          // Scale up as it grows 
           const growthCurve = this._easeOutCubic(point.growthProgress);
-          const scale = 0.2 + growthCurve * 0.8;
+          const scale = 0.3 + growthCurve * 0.7;
           point.apple.scale.set(scale, scale, scale);
-          
-          // Skip wobble animation in performance mode
-          if (!this.options.performanceMode && point.growthProgress < 0.95 && this.updateCounter % 6 === 0) {
-            const wobble = Math.sin(Date.now() / 200) * 0.03 * (1 - point.growthProgress);
-            point.apple.rotation.x = wobble;
-            point.apple.rotation.z = wobble * 0.7;
+
+          // Change material when ripe
+          if (point.growthProgress >= 1.0) {
+             const type = point.appleType;
+             const newMaterial = this.appleMaterials[type];
+             if (point.apple.material !== newMaterial) {
+                 point.apple.material = newMaterial;
+                 // *** ADDED LOG ***
+                //  console.log(`[AppleSystem] Apple ${point.apple.id} ripened! Type: ${type}`);
+                 // *** END ADDED LOG ***
+                 this._ripenApple(point.apple, type); // Pass type
+             }
+          } else {
+             // Ensure it stays unripe material while growing
+             const type = point.appleType;
+             const unripeMaterial = this.unripeAppleMaterials[type];
+             if (point.apple.material !== unripeMaterial) {
+                 point.apple.material = unripeMaterial;
+             }
           }
-          
-          // Change color based on ripeness - only if changed since last update
-          const newMaterial = point.growthProgress < 0.6 ? this.unripeAppleMaterial :
-                             (point.isGolden ? this.goldenAppleMaterial : this.appleMaterial);
-          
-          if (point.apple.material !== newMaterial) {
-            point.apple.material = newMaterial;
-          }
-          
-          // Skip shine effects in performance mode
-          if (!this.options.performanceMode && 
-              point.growthProgress > 0.8 && 
-              !point.apple.userData.hasShine && 
-              point.isGolden) {
-            this._addAppleShine(point.apple, point.isGolden);
-            point.apple.userData.hasShine = true;
-          }
+          // ... (wobble logic remains the same) ...
         }
       });
     });
+    // Add occasional log
+    // if (updatedCount > 0 && this.updateCounter % 60 === 0) { // Log every ~second if updates happened
+    //     console.log(`[AppleSystem] Updated growth for ${updatedCount} apples.`);
+    // }
   }
 
   /**
@@ -412,77 +456,62 @@ export default class AppleSystem {
    * @private
    */
   _startNewApple(growthPoint) {
-    // Use fewer segments for performance
+    if (growthPoint.hasApple) return; // Don't overwrite existing apple
+
+    // --- Determine Apple Type ---
+    let chosenType = 'red'; // Default
+    let effectMultiplier = this.options.appleTypes.red.effectMultiplier;
+    const rand = Math.random();
+    let cumulativeProb = 0;
+    for (const type in this.options.appleTypes) {
+        cumulativeProb += this.options.appleTypes[type].probability;
+        if (rand < cumulativeProb) {
+            chosenType = type;
+            effectMultiplier = this.options.appleTypes[type].effectMultiplier;
+            break;
+        }
+    }
+    growthPoint.appleType = chosenType;
+    growthPoint.effectMultiplier = effectMultiplier;
+    // --- End Determine Apple Type ---
+
     const segments = this.options.appleSegments;
-    const geometry = new THREE.SphereGeometry(this.options.appleRadius, segments, Math.max(6, segments - 2));
-    
-    // Determine if this will be a golden apple
-    const isGolden = Math.random() < this.options.goldenAppleProbability;
-    growthPoint.isGolden = isGolden;
-    
-    // Choose material based on initial growth state (always starts as unripe)
-    const material = this.unripeAppleMaterial;
-    
-    // Create mesh
+    const geometry = new THREE.SphereGeometry(this.options.appleRadius, segments, Math.max(4, segments - 2)); // Further reduce segments
+
+    // Start with unripe material of the chosen type
+    const material = this.unripeAppleMaterials[chosenType].clone();
+
     const mesh = new THREE.Mesh(geometry, material);
-    
-    // Add minimal stem for visual detail - simpler geometry
-    const stemGeometry = new THREE.CylinderGeometry(0.3, 0.3, 1.5, 4, 1); // Reduced segments
-    stemGeometry.translate(0, this.options.appleRadius, 0);
+    mesh.castShadow = true; // Apples should cast shadows
+
+    // Add stem (keep simple)
+    const stemGeometry = new THREE.CylinderGeometry(0.3, 0.3, 1.5, 4, 1);
+    stemGeometry.translate(0, this.options.appleRadius, 0); // Position stem top at apple surface
     const stemMaterial = new THREE.MeshLambertMaterial({ color: 0x553311 });
     const stem = new THREE.Mesh(stemGeometry, stemMaterial);
     mesh.add(stem);
-    
-    // Skip leaf in performance mode
-    if (!this.options.performanceMode) {
-      // Add leaf to stem for better visibility
-      const leafGeometry = new THREE.PlaneGeometry(1.2, 2.0);
-      const leafMaterial = new THREE.MeshLambertMaterial({
-        color: 0x44aa22,
-        side: THREE.DoubleSide
-      });
-      const leaf = new THREE.Mesh(leafGeometry, leafMaterial);
-      leaf.position.set(0.5, 1.2, 0);
-      leaf.rotation.set(0, 0, Math.PI/4);
-      stem.add(leaf);
-    }
-    
-    // Position the apple
+
+    // Position the apple mesh AT the growth point
     mesh.position.copy(growthPoint.position);
-    
-    // Orient the apple with stem pointing against normal
-    const normalMatrix = new THREE.Matrix4().lookAt(
-      new THREE.Vector3(0, 0, 0),
-      growthPoint.normal,
-      new THREE.Vector3(0, 1, 0)
-    );
-    mesh.setRotationFromMatrix(normalMatrix);
-    
-    // Start small and grow over time
-    const initialScale = 0.2;
+
+    // Orient the apple - Use lookAt towards the foliage center (inverse of normal)
+    const lookAtPos = growthPoint.position.clone().add(growthPoint.normal.clone().negate());
+    mesh.lookAt(lookAtPos); // Stem should point roughly towards tree center
+
+    // Start small
+    const initialScale = 0.3; // Start at 30% scale
     mesh.scale.set(initialScale, initialScale, initialScale);
-    
-    // Track the apple in growth point
+
     growthPoint.hasApple = true;
     growthPoint.apple = mesh;
-    growthPoint.growthProgress = 0;
-    
-    // Add to scene
+    growthPoint.growthProgress = 0; // Reset progress
+
     this.scene.add(mesh);
-    
-    // Skip glow effects in performance mode
-    if (!this.options.performanceMode && isGolden) {
-      // Add glow only for golden apples
-      const glowSize = this.options.appleRadius * 1.1;
-      const glowGeometry = new THREE.SphereGeometry(glowSize, 8, 6); // Reduced segments
-      const glowMaterial = new THREE.MeshBasicMaterial({
-        color: 0xffdd44,
-        transparent: true,
-        opacity: 0.15,
-        side: THREE.BackSide
-      });
-      const glow = new THREE.Mesh(glowGeometry, glowMaterial);
-      mesh.add(glow);
+    // console.log(`[AppleSystem] Started new ${chosenType.toUpperCase()} apple (${mesh.id}) at [${growthPoint.position.x.toFixed(1)}, ${growthPoint.position.y.toFixed(1)}, ${growthPoint.position.z.toFixed(1)}]`);
+
+    // Add simple glow for golden apples (optional)
+    if (!this.lowPerformanceMode && (chosenType === 'yellow' || chosenType === 'green')) {
+      // ... (add glow logic if needed) ...
     }
   }
 
@@ -589,19 +618,36 @@ export default class AppleSystem {
   _tryDropApples(deltaTime) {
     // Calculate chance of ripe apple falling
     const chancePerApple = this.options.fallProbability * deltaTime;
-    
+    let checkedRipeApples = 0; // Count how many ripe apples we check
+
     // Check each tree and its growth points
     Object.values(this.growthPoints).forEach(points => {
       points.forEach(point => {
         // Skip points without ripe apples
         if (!point.hasApple || point.growthProgress < 1.0) return;
-        
-        // Random chance for the apple to fall
-        if (Math.random() < chancePerApple) {
+
+        checkedRipeApples++; // Increment count of ripe apples checked
+
+        // *** ADDED LOGGING ***
+        const randomCheck = Math.random();
+        // console.log(`[AppleSystem] Checking drop for ripe apple ${point.apple.id}. Chance: ${chancePerApple.toFixed(4)}, Rolled: ${randomCheck.toFixed(4)}`); // Optional: uncomment for verbose logging
+        // *** END ADDED LOGGING ***
+
+        if (randomCheck < chancePerApple) {
+          // *** ADDED LOG ***
+        //   console.log(`[AppleSystem] SUCCESS! Dropping apple ${point.apple.id}.`);
+          // *** END ADDED LOG ***
           this._detachApple(point);
         }
       });
     });
+
+    // *** ADDED LOG ***
+    // Log only if we actually checked any ripe apples to reduce noise
+    if (checkedRipeApples > 0 && this.updateCounter % 60 === 0) { // Log roughly every second if checking
+        // console.log(`[AppleSystem] Checked ${checkedRipeApples} ripe apples for dropping.`);
+    }
+    // *** END ADDED LOG ***
   }
   
   /**
@@ -610,6 +656,9 @@ export default class AppleSystem {
    * @private
    */
   _detachApple(growthPoint) {
+    if (!growthPoint.hasApple || !growthPoint.apple) return; // Check if apple exists
+
+    // console.log(`[AppleSystem] Detaching ${growthPoint.appleType} apple ${growthPoint.apple.id}`);
     // Create falling apple object
     const apple = {
       position: growthPoint.position.clone(),
@@ -617,7 +666,8 @@ export default class AppleSystem {
       mesh: growthPoint.apple,
       isGrounded: false,
       groundTime: 0,
-      isGolden: growthPoint.isGolden
+      appleType: growthPoint.appleType, // Store type
+      effectMultiplier: growthPoint.effectMultiplier // Store multiplier
     };
     
     // Add some initial velocity (slight outward push + randomness)
@@ -648,21 +698,24 @@ export default class AppleSystem {
    * @private
    */
   _tryStartNewApples(deltaTime) {
-    // Calculate chance of new apple starting to grow
     const chancePerPoint = this.options.growthProbability * deltaTime;
-    
-    // Check each tree and its growth points
+    let potentialStarts = 0;
+    let actualStarts = 0;
+
     Object.values(this.growthPoints).forEach(points => {
       points.forEach(point => {
-        // Skip points that already have apples
-        if (point.hasApple) return;
-        
-        // Random chance to start a new apple
-        if (Math.random() < chancePerPoint) {
-          this._startNewApple(point);
+        if (!point.hasApple) {
+          potentialStarts++;
+          if (Math.random() < chancePerPoint) {
+            this._startNewApple(point);
+            actualStarts++;
+          }
         }
       });
     });
+     if (actualStarts > 0) { // Log only if apples actually started
+    //    console.log(`[AppleSystem] Started ${actualStarts} new apples.`);
+     }
   }
   
   /**
@@ -704,7 +757,7 @@ export default class AppleSystem {
       
       if (distance < collectionRadius) {
         // Collect this apple
-        this._collectApple(apple.isGolden ? 'goldenApple' : 'apple', apple.position);
+        this._collectApple(apple.appleType, apple.effectMultiplier, apple.position); // Pass type and multiplier
         
         // Remove from scene and list
         this._removeGroundApple(i);
@@ -740,7 +793,8 @@ export default class AppleSystem {
         
         if (distance < collectionRadius * 0.7) {
           // Collect this apple
-          const type = point.isGolden ? 'goldenApple' : 'apple';
+          const type = point.appleType;
+          const multiplier = point.effectMultiplier;
           const position = point.position.clone();
           
           // Remove apple from tree
@@ -752,7 +806,7 @@ export default class AppleSystem {
           point.growthProgress = 0;
           
           // Register collection
-          this._collectApple(type, position);
+          this._collectApple(type, multiplier, position);
         }
       }
     }
@@ -764,25 +818,28 @@ export default class AppleSystem {
    * @param {THREE.Vector3} position - Position where apple was collected
    * @private
    */
-  _collectApple(type, position) {
-    // Update stats
-    if (type === 'apple') {
-      this.stats.applesCollected++;
-      this.stats.totalCollected += this.options.appleValue;
-    } else {
-      this.stats.goldenApplesCollected++;
-      this.stats.totalCollected += this.options.goldenAppleValue;
-    }
-    
-    // Call collection callback
+  _collectApple(type, effectMultiplier, position) {
+    const value = this.options.appleTypes[type]?.value || 1; // Get value from config
+
+    // Update stats based on type
+    if (type === 'red') this.stats.applesCollected++;
+    else if (type === 'yellow') this.stats.goldenApplesCollected++; // Using golden for yellow for now
+    else if (type === 'green') this.stats.goldenApplesCollected++; // Using golden for green for now
+    // TODO: Add specific stats counters if needed later
+
+    this.stats.totalCollected += value;
+    // console.log(`[AppleSystem] Collected ${type} apple! Value: ${value}, Multiplier: ${effectMultiplier}`);
+
+    // Call collection callback with type, value, and multiplier
     if (this.options.onAppleCollected) {
       this.options.onAppleCollected(
-        type, 
-        type === 'apple' ? this.options.appleValue : this.options.goldenAppleValue,
+        type,
+        value,
+        effectMultiplier, // Pass the multiplier
         position
       );
     }
-    
+
     // Skip effect in performance mode
     if (!this.options.performanceMode && 
        (type === 'goldenApple' || Math.random() < 0.3)) {
@@ -796,56 +853,66 @@ export default class AppleSystem {
    * @param {boolean} isGolden - Whether it's a golden apple
    * @private
    */
-  _playCollectionEffect(position, isGolden) {
-    // Create very simple particle effect with minimal particles
-    const particleCount = isGolden ? 5 : 3; // Drastically reduced
-    const color = isGolden ? 0xffdd00 : 0xff2200;
-    
+  _playCollectionEffect(position, type) {
+    if (!this.options.collectionEffect || this.options.performanceMode) return;
+
+    const effectConfig = this.options.collectionEffect;
+    const particleCount = Math.round(effectConfig.particleCount * effectMultiplier);
+    const baseColor = effectConfig.colors[type] || effectConfig.colors.default;
+
+    // Create particle effect
+    const particles = [];
+    const geometry = new THREE.BufferGeometry();
+    const material = new THREE.PointsMaterial({
+      size: effectConfig.particleSize,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.8,
+      depthWrite: false, // Prevent particles from obscuring other objects incorrectly
+      blending: THREE.AdditiveBlending // Brighter effect
+    });
+
+    const positions = [];
+    const colors = [];
+    const velocities = [];
+    const life = [];
+
+    const color = new THREE.Color(baseColor);
+
     for (let i = 0; i < particleCount; i++) {
-      // Create particle with minimal geometry
-      const size = (isGolden ? 0.4 : 0.3) * (0.5 + Math.random() * 0.5);
-      const geometry = new THREE.SphereGeometry(size, 4, 3); // Minimal segments
-      const material = new THREE.MeshBasicMaterial({
-        color: color,
-        transparent: true,
-        opacity: 0.8
-      });
-      const particle = new THREE.Mesh(geometry, material);
-      
-      // Position at collection point
-      particle.position.copy(position);
-      
-      // Random velocity
+      positions.push(position.x, position.y, position.z);
+      colors.push(color.r, color.g, color.b);
+
+      // Random velocity outwards
       const velocity = new THREE.Vector3(
-        (Math.random() - 0.5) * 2,
-        (Math.random() - 0.5) * 2,
-        (Math.random() - 0.5) * 2
-      ).normalize().multiplyScalar(2 + Math.random() * 3);
-      
-      // Add to scene
-      this.scene.add(particle);
-      
-      // Simplified animation - just fade out
-      const duration = 300 + Math.random() * 200; // Shorter duration
-      
-      new TWEEN.Tween(material)
-        .to({ opacity: 0 }, duration)
-        .onComplete(() => {
-          this.scene.remove(particle);
-        })
-        .start();
-        
-      // Move particle without TWEEN
-      const finalPos = {
-        x: particle.position.x + velocity.x,
-        y: particle.position.y + velocity.y,
-        z: particle.position.z + velocity.z
-      };
-      
-      new TWEEN.Tween(particle.position)
-        .to(finalPos, duration)
-        .start();
+        (Math.random() - 0.5),
+        (Math.random() - 0.5),
+        (Math.random() - 0.5)
+      ).normalize().multiplyScalar(effectConfig.speed * (0.5 + Math.random() * 0.5));
+      velocities.push(velocity);
+
+      // Random lifetime
+      life.push(effectConfig.lifetime * (0.7 + Math.random() * 0.6));
     }
+
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+
+    const points = new THREE.Points(geometry, material);
+    points.userData = {
+      isEffect: true,
+      velocities: velocities,
+      life: life,
+      startTime: performance.now()
+    };
+
+    this.scene.add(points);
+    this.activeEffects.push(points);
+
+    // Auto-remove after max lifetime
+    setTimeout(() => {
+      this._removeEffect(points);
+    }, effectConfig.lifetime * 1.3 * 1000); // Remove slightly after max lifetime
   }
 
   /**
@@ -870,7 +937,7 @@ export default class AppleSystem {
       this.tweenUpdateInterval = 50;
     }
     
-    console.log(`Apple system performance mode: ${enabled ? 'ENABLED' : 'DISABLED'}`);
+    // console.log(`Apple system performance mode: ${enabled ? 'ENABLED' : 'DISABLED'}`);
     return this.options.performanceMode;
   }
 
@@ -900,7 +967,7 @@ export default class AppleSystem {
     this.groundApples = [];
     this.appleTrees = [];
     
-    console.log("Apple system cleaned up");
+    // console.log("Apple system cleaned up");
   }
 
   /**
@@ -999,21 +1066,24 @@ export default class AppleSystem {
    * Manually grow all apples to full size
    */
   growAllApples() {
+    let ripenedCount = 0;
     Object.values(this.growthPoints).forEach(points => {
       points.forEach(point => {
-        if (point.hasApple) {
+        if (point.hasApple && point.growthProgress < 1.0) {
           point.growthProgress = 1.0;
-          
-          // Update appearance
           if (point.apple) {
-            point.apple.scale.set(1, 1, 1);
-            point.apple.material = point.isGolden ? 
-                                this.goldenAppleMaterial : 
-                                this.appleMaterial;
+            point.apple.scale.set(1, 1, 1); // Ensure full scale
+            const newMaterial = point.isGolden ? this.goldenAppleMaterial : this.appleMaterial;
+            if (point.apple.material !== newMaterial) {
+                 point.apple.material = newMaterial;
+                 this._ripenApple(point.apple); // Call ripen hook
+                 ripenedCount++;
+            }
           }
         }
       });
     });
+    // console.log(`[AppleSystem] Forced ${ripenedCount} apples to ripen.`);
   }
   
   /**
@@ -1163,5 +1233,49 @@ export default class AppleSystem {
     });
     
     return count;
+  }
+
+  _updateApples(deltaTime) {
+    // ...existing code...
+    this.apples.forEach(apple => {
+      if (!apple.fallen) {
+        if (apple.growthProgress < 1.0) {
+          apple.growthProgress += deltaTime / this.config.growthTime;
+        //   console.log(`🌱 [AppleSystem] growthProgress=${apple.growthProgress.toFixed(2)} at ${apple.position.toArray()}`);
+          if (apple.growthProgress >= 1.0) {
+            apple.growthProgress = 1.0;
+            this._ripenApple(apple);
+          }
+        } else if (apple.ripe) {
+          // ...existing code...
+        }
+      }
+    });
+    // ...existing code...
+  }
+
+  _ripenApple(appleMesh, type) { // Accept type
+    // console.log(`🍏 [AppleSystem] ripened ${type} apple at ${appleMesh.position.toArray()}`);
+    // Maybe add a subtle effect on ripen
+  }
+
+  // --- NEW Method ---
+  /**
+   * Get the current count of apples on trees and on the ground.
+   * @returns {{treeApples: number, groundApples: number}}
+   */
+  getAppleCount() {
+    let treeAppleCount = 0;
+    Object.values(this.growthPoints).forEach(points => {
+      points.forEach(point => {
+        if (point.hasApple) {
+          treeAppleCount++;
+        }
+      });
+    });
+    return {
+      treeApples: treeAppleCount,
+      groundApples: this.groundApples.length
+    };
   }
 }
