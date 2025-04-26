@@ -77,64 +77,113 @@ export default class ProjectileSystem {
   }
   
   /**
-   * Create a new projectile
+   * Create and fire a new projectile
    * @param {THREE.Vector3} position - Starting position
    * @param {THREE.Vector3} velocity - Initial velocity
-   * @param {string} type - Projectile type ('apple' or 'goldenApple')
+   * @param {string} type - Type of projectile (e.g., 'red', 'yellow', 'green')
    * @returns {Object} The created projectile
    */
-  createProjectile(position, velocity, type = 'apple') {
-    // Enforce maximum projectile limit by removing oldest if needed
-    if (this.projectiles.length >= this.options.maxProjectiles) {
-      const oldest = this.projectiles.shift();
-      if (oldest.mesh) this.scene.remove(oldest.mesh);
-    }
+  createProjectile(position, velocity, type = 'red') {
+    // Get the type-specific color
+    const color = this._getProjectileColor(type);
     
-    // Create geometry based on type
-    const geometry = new THREE.SphereGeometry(
-      this.options.projectileRadius, 
-      10, 8
-    );
+    // Create geometry and material based on type
+    const geometry = new THREE.SphereGeometry(this.options.projectileRadius, 12, 8);
+    const material = new THREE.MeshLambertMaterial({ 
+      color: color,
+      // Add emissive for all types - apply to red as well for consistency
+      emissive: new THREE.Color(color).multiplyScalar(0.3)
+    });
     
-    // Select material based on type
-    const material = this.materials[type] || this.materials.apple;
-    
-    // Create mesh
     const mesh = new THREE.Mesh(geometry, material);
     mesh.castShadow = true;
+    mesh.position.copy(position);
     
-    // Add a small stem to apples
+    // Add stem to apple
     const stemGeometry = new THREE.CylinderGeometry(
-      0.3, 0.3, 1.5, 4
+      this.options.projectileRadius * 0.1, 
+      this.options.projectileRadius * 0.1,
+      this.options.projectileRadius * 0.5, 
+      4
     );
-    stemGeometry.translate(0, this.options.projectileRadius, 0);
     const stemMaterial = new THREE.MeshLambertMaterial({ color: 0x553311 });
     const stem = new THREE.Mesh(stemGeometry, stemMaterial);
     
-    // Randomize stem orientation
-    stem.rotation.y = Math.random() * Math.PI * 2;
+    // Position stem at top of apple
+    stem.position.y = this.options.projectileRadius;
     mesh.add(stem);
     
-    // Position mesh at start point
-    mesh.position.copy(position);
+    // Add subtle glow for ALL types, including red
+    const glowSize = this.options.projectileRadius * 1.3;
+    const glowGeometry = new THREE.SphereGeometry(glowSize, 16, 12);
+    
+    // Choose appropriate glow color based on type
+    let glowColor;
+    switch (type) {
+      case 'yellow':
+        glowColor = 0xffff00;
+        break;
+      case 'green':
+        glowColor = 0x88ff88;
+        break;
+      case 'red':
+      default:
+        glowColor = 0xff4400; // Reddish glow for red apples
+        break;
+    }
+    
+    const glowMaterial = new THREE.MeshBasicMaterial({
+      color: glowColor,
+      transparent: true,
+      opacity: 0.2,
+      side: THREE.BackSide
+    });
+    
+    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+    mesh.add(glow);
+    
+    this.scene.add(mesh);
     
     // Create projectile object
     const projectile = {
       position: position.clone(),
+      lastPosition: position.clone(), // FIXED: Initialize lastPosition property
       velocity: velocity.clone(),
       mesh: mesh,
-      createdAt: Date.now(),
-      type: type,
-      bounces: 0,
-      maxBounces: type === 'goldenApple' ? 3 : 2,
-      lastPosition: position.clone() // Store last position for collision detection
+      mass: 1.0,
+      lifetime: 0,
+      type: type, // Store the projectile type
+      bounceCount: 0,
+      bounces: 0, // FIXED: Add missing bounces property
+      maxBounces: 3, // FIXED: Initialize with default max bounces
+      createdAt: Date.now() // FIXED: Initialize createdAt timestamp for lifetime checks
     };
     
-    // Add to scene and tracking list
-    this.scene.add(mesh);
+    // Add to active projectiles
     this.projectiles.push(projectile);
     
+    // Log projectile creation with type and color
+    console.log(`[ProjectileSystem] Created ${type} projectile at ${position.toArray()}. Color: ${color.toString(16)}`);
+    
     return projectile;
+  }
+
+  /**
+   * Get color for a projectile type
+   * @param {string} type - The projectile type
+   * @returns {number} - The color as a hex value
+   * @private
+   */
+  _getProjectileColor(type) {
+    switch (type) {
+      case 'yellow':
+        return 0xffdd00; // Yellow
+      case 'green':
+        return 0x33ff33; // Green
+      case 'red':
+      default:
+        return 0xff2200; // Red (default)
+    }
   }
   
   /**
@@ -169,7 +218,12 @@ export default class ProjectileSystem {
       }
       
       // Store last position for collision line detection
-      projectile.lastPosition.copy(projectile.position);
+      // SAFETY CHECK: Ensure lastPosition exists before copying
+      if (!projectile.lastPosition) {
+        projectile.lastPosition = projectile.position.clone();
+      } else {
+        projectile.lastPosition.copy(projectile.position);
+      }
       
       // Apply physics
       this._updateProjectilePhysics(projectile, deltaTime);

@@ -566,14 +566,18 @@ initEnvironment(scene, 'medium', worldConfig, (placerFunc) => {
   const appleGrowthMgr = new AppleGrowthManager(
     scene,
     getFullTerrainHeight,       // imported from world_objects.js
-    // Update the callback to refresh the UI immediately after collecting apples
+    // FIX FOR APPLE COLLECTION: Always add exactly 1 per pickup
     (type, value, effectMultiplier, pos) => { 
       if (player) {
         const ammoType = type; // Types should directly match ("red", "yellow", "green")
-        console.log(`[AppleCollection] Adding ${value} ${ammoType} apples to inventory`);
         
-        // Add ammo directly to player inventory
-        player.addAmmo(ammoType, value);
+        // CRITICAL FIX: Always add exactly 1 per apple collected, regardless of type or value
+        const amountToAdd = 1; // Force to exactly 1
+        
+        console.log(`[AppleCollection] Adding exactly 1 ${ammoType} apple to inventory (ignoring value=${value})`);
+        
+        // Add ammo directly to player inventory - ALWAYS ADD 1
+        player.addAmmo(ammoType, amountToAdd);
         
         // CRITICAL FIX: Immediately update the ammo display in the UI
         if (player.weaponSystem && typeof player.weaponSystem._updateAmmoDisplay === 'function') {
