@@ -29,7 +29,7 @@
         <li>Mouse - Look around</li>
         <li>Space - Jump</li>
         <li><strong>Left Shift - Crouch</strong> (hold or double-tap to toggle)</li>
-        <li>Q - Switch weapon</li>
+        <li>C or Right-click - Switch ammo type</li>
         <li>Left Mouse - Fire weapon</li>
       </ul>
       <p><strong>Console Commands:</strong></p>
@@ -61,6 +61,8 @@
   <!-- Load tree fix script -->
   <script type="module" src="/static/js/tree-fixer-pro.js"></script>
   
+  <!-- REMOVED: References to ammo-cycling-fix.js and simple-ammo-switcher.js -->
+  
   <script>
     // Hide loading screen when content loaded
     window.addEventListener('load', () => {
@@ -90,11 +92,50 @@
         }
       });
 
+      // Add emergency fix command
+      window.fixAmmo = function() {
+        if (window.player) {
+          // Force add ammo
+          window.player.addAmmo('red', 10);
+          window.player.addAmmo('yellow', 10);
+          window.player.addAmmo('green', 10);
+          
+          // Force update weapon system
+          if (window.player.weaponSystem) {
+            // Make sure weapon system can see the ammo
+            window.player.weaponSystem.ammo = window.player.ammo;
+            
+            // Force UI update
+            if (typeof window.player.weaponSystem._updateAmmoDisplay === 'function') {
+              window.player.weaponSystem._updateAmmoDisplay();
+            }
+            
+            // Force model update
+            if (typeof window.player.weaponSystem.updateModel === 'function') {
+              window.player.weaponSystem.updateModel();
+            }
+          }
+          
+          console.log("Emergency ammo fix applied! You should have 10 of each ammo type now.");
+          return "Ammo fixed!";
+        }
+        return "Player not available";
+      };
+      
       // Give player ammo early
       setTimeout(() => {
         if (window.player && window.player.addAmmo) {
-          window.player.addAmmo('apple', 50); // Give 50 apples
-          console.log("✅ Gave player 50 apple ammo");
+          // Update to give multiple ammo types
+          window.player.addAmmo('red', 20);
+          window.player.addAmmo('yellow', 15);
+          window.player.addAmmo('green', 10);
+          console.log("✅ Gave player starting ammo");
+          
+          // Force weapon system update
+          if (window.player.weaponSystem) {
+            window.player.weaponSystem._updateAmmoDisplay();
+            window.player.weaponSystem.updateModel();
+          }
         }
       }, 3500);
     });

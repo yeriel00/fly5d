@@ -16,7 +16,14 @@ export default class AppleGrowthManager {
     this.appleSystem = new AppleSystem(scene, {
       sphereRadius: 400,
       getTerrainHeight,
-      onAppleCollected: onCollect,
+      onAppleCollected: (type, value, multiplier, position) => {
+        console.log(`[AppleGrowthManager] Apple collected! Adding ${value} ${type} apples to player.`);
+        if (onCollect) {
+          onCollect(type, value, multiplier, position);
+        } else {
+          console.warn('[AppleGrowthManager] No onCollect callback provided!');
+        }
+      },
       maxApplesPerTree: 6,
       // Apply speed multiplier directly here as well for clarity
       growthTime: 10 / this.cfg.speedMultiplier, // Use base time from AppleSystem

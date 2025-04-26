@@ -55,7 +55,103 @@ export default class WeaponSystem {
     // Setup weapon model
     this.setupModel(camera);
 
+    // Create charge UI
+    this._setupChargeUI();
+
+    // Setup direct right-click handler
+    this._setupRightClickHandler();
+
     console.log("Weapon system created with multi-ammo support");
+  }
+
+  /**
+   * Set up charge UI element
+   * @private
+   */
+  _setupChargeUI() {
+    // Create power bar container
+    const powerBarContainer = document.createElement('div');
+    powerBarContainer.id = 'power-bar-container';
+    powerBarContainer.style.position = 'absolute';
+    powerBarContainer.style.bottom = '30px';
+    powerBarContainer.style.left = '50%';
+    powerBarContainer.style.transform = 'translateX(-50%)';
+    powerBarContainer.style.width = '200px';
+    powerBarContainer.style.height = '10px';
+    powerBarContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+    powerBarContainer.style.borderRadius = '5px';
+    powerBarContainer.style.display = 'none'; // Hide initially
+    document.body.appendChild(powerBarContainer);
+    
+    // Create power bar fill
+    const powerBarFill = document.createElement('div');
+    powerBarFill.id = 'power-bar-fill';
+    powerBarFill.style.width = '0%';
+    powerBarFill.style.height = '100%';
+    powerBarFill.style.borderRadius = '5px';
+    powerBarFill.style.backgroundColor = '#ff3333'; // Default red
+    powerBarContainer.appendChild(powerBarFill);
+    
+    // Store references
+    this.chargeUI = {
+      container: powerBarContainer,
+      fill: powerBarFill
+    };
+    
+    // Create ammo indicator
+    const ammoIndicator = document.createElement('div');
+    ammoIndicator.id = 'ammo-indicator';
+    ammoIndicator.style.position = 'absolute';
+    ammoIndicator.style.bottom = '20px';
+    ammoIndicator.style.right = '20px';
+    ammoIndicator.style.padding = '5px 10px';
+    ammoIndicator.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+    ammoIndicator.style.color = 'white';
+    ammoIndicator.style.fontFamily = 'Arial, sans-serif';
+    ammoIndicator.style.fontSize = '16px';
+    ammoIndicator.style.borderRadius = '5px';
+    document.body.appendChild(ammoIndicator);
+    
+    // Store reference
+    this.ammoUI = ammoIndicator;
+    
+    // Update ammo display initially
+    this._updateAmmoDisplay();
+  }
+
+  /**
+   * Setup right-click handler for ammo switching
+   * @private
+   */
+  _setupRightClickHandler() {
+    // This function gets called for ANY right-click, regardless of pointer lock
+    const handleRightClick = (event) => {
+      if (event.button === 2) { // Right mouse button
+        event.preventDefault();
+        event.stopPropagation();
+        
+        console.log("[WeaponSystem] Right-click detected, cycling ammo");
+        this.cycleAmmoType();
+        return false;
+      }
+    };
+
+    // Also handle the 'c' key as a keyboard alternative
+    const handleKeyDown = (event) => {
+      if (event.key === 'c' || event.key === 'C') {
+        console.log("[WeaponSystem] C key pressed, cycling ammo");
+        this.cycleAmmoType();
+      }
+    };
+
+    // Add the event listeners directly without pointer lock check
+    document.addEventListener('mousedown', handleRightClick, true);
+    document.addEventListener('keydown', handleKeyDown, false);
+    
+    // Prevent default context menu always
+    document.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+    }, false);
   }
 
   /**
@@ -90,7 +186,29 @@ export default class WeaponSystem {
     console.log(`[WeaponSystem] Charging ${this.currentAmmoType} weapon`);
     this._updateModelAnimation('charge'); // Trigger charge animation
 
+    // Show charge UI if successful
+    if (this.isCharging) {
+      this._updateChargeUI(0); // Start at 0% charge
+      this.chargeUI.container.style.display = 'block'; // Show the UI
+      this.chargeUI.fill.style.backgroundColor = this._getAmmoColor(this.chargeState.ammoType);
+    }
+
     return true;
+  }
+
+  /**
+   * Get color for ammo type
+   * @param {string} ammoType - The ammo type
+   * @returns {string} - CSS color string
+   * @private
+   */
+  _getAmmoColor(ammoType) {
+    const colors = {
+      red: '#ff3333',
+      yellow: '#ffff33',
+      green: '#33ff33'
+    };
+    return colors[ammoType] || colors.red;
   }
 
   /**
@@ -101,8 +219,48 @@ export default class WeaponSystem {
       this.isCharging = false;
       this.chargeState = null; // Clear charge state
       this._updateModelAnimation('idle'); // Reset animation
+      
+      // Hide charge UI
+      this.chargeUI.container.style.display = 'none';
+      
       console.log("Weapon charge canceled");
     }
+  }
+
+  /**
+   * Update the charge UI
+   * @param {number} power - Charge power (0-1)
+   * @private
+   */
+  _updateChargeUI(power) {
+    if (!this.chargeUI) return;
+    
+    // Update the fill width
+    const percent = Math.min(100, Math.max(0, power * 100));
+    this.chargeUI.fill.style.width = `${percent}%`;
+  }
+
+  /**
+   * Update ammo display
+   * @private
+   */
+  _updateAmmoDisplay() {
+    if (!this.ammoUI) return;
+    
+    // Format ammo counts with current type highlighted
+    const red = this.ammo.red || 0;
+    const yellow = this.ammo.yellow || 0;
+    const green = this.ammo.green || 0;
+    
+    // Highlight current type
+    const current = this.currentAmmoType;
+    
+    let html = '';
+    html += `<span style="${current === 'red' ? 'color: #ff3333; font-weight: bold;' : ''}">Red: ${red}</span> | `;
+    html += `<span style="${current === 'yellow' ? 'color: #ffff33; font-weight: bold;' : ''}">Yellow: ${yellow}</span> | `;
+    html += `<span style="${current === 'green' ? 'color: #33ff33; font-weight: bold;' : ''}">Green: ${green}</span>`;
+    
+    this.ammoUI.innerHTML = html;
   }
 
   /**
@@ -119,6 +277,9 @@ export default class WeaponSystem {
     this.chargeState.power = power;
     this.chargeState.elapsed = elapsed;
     // ammoType remains as it was when charging started
+
+    // Update charge UI with current power
+    this._updateChargeUI(power);
 
     return this.chargeState;
   }
@@ -167,6 +328,9 @@ export default class WeaponSystem {
     this.chargeState = null; // Clear state after use
     this._updateModelAnimation('idle');
 
+    // Hide charge UI
+    this.chargeUI.container.style.display = 'none';
+
     if (canFire) {
       this._playSound('fire', 0.8 + power * 0.2);
       console.log(`[WeaponSystem] release() successful: Charged ${ammoType} with power ${power}.`);
@@ -194,6 +358,9 @@ export default class WeaponSystem {
   cycleAmmoType() {
     if (!this.availableAmmoTypes || this.availableAmmoTypes.length === 0) return this.currentAmmoType;
 
+    // Adding logging to track ammo switching
+    console.log(`[WeaponSystem] cycleAmmoType - current type: ${this.currentAmmoType}`);
+
     const currentIndex = this.availableAmmoTypes.indexOf(this.currentAmmoType);
     if (currentIndex === -1) { // Should not happen if initialized correctly
         this.currentAmmoType = this.availableAmmoTypes[0];
@@ -203,11 +370,30 @@ export default class WeaponSystem {
     }
 
     console.log(`[WeaponSystem] Switched ammo type to: ${this.currentAmmoType}`);
+    
+    // Update the ammo display
+    this._updateAmmoDisplay();
+    
     // If charging, cancel it when switching ammo
     if (this.isCharging) {
         this.cancelCharge();
     }
+    
+    // Update the visual model immediately, even when not charging
+    this.updateModel();
+    
+    // No longer showing central notification - removed _showAmmoSwitchNotification call
+    
     return this.currentAmmoType;
+  }
+
+  /**
+   * Show visual notification when ammo type changes
+   * @param {string} type - The ammo type switched to
+   * @private - This method is no longer used
+   */
+  _showAmmoSwitchNotification(type) {
+    // Method body intentionally empty - we're no longer using central notifications
   }
 
   /**
@@ -218,6 +404,11 @@ export default class WeaponSystem {
     // Update projectile system
     if (this.projectileSystem) {
       this.projectileSystem.update(deltaTime);
+    }
+
+    // Update charge state if charging
+    if (this.isCharging) {
+      this.getChargeState();
     }
 
     // Update weapon model (handles charge animation)
@@ -423,15 +614,37 @@ export default class WeaponSystem {
       const restingPocketPos = new THREE.Vector3(0, 0, 0.15);
       this._updateBands(restingPocketPos);
 
-      // Hide the active projectile model if it's visible
-      if (this.activeProjectileModel) {
-        this.activeProjectileModel.visible = false;
-        // Don't remove from group here, just hide. It will be removed/swapped if charging starts again.
-        this.activeProjectileModel = null; // Clear the reference
+      // Show the current ammo type model at rest position when not charging
+      // This ensures the correct model is shown even when just switching types
+      const modelToShow = this.projectileModels[this.currentAmmoType];
+      
+      // FIXED: Only show model if we have ammo of this type available
+      if (modelToShow && this.ammo && this.ammo[this.currentAmmoType] > 0) {
+        // Switch model if necessary or if none is active
+        if (this.activeProjectileModel !== modelToShow) {
+          // Hide previous model if there was one
+          if (this.activeProjectileModel) {
+            this.activeProjectileModel.visible = false;
+            this.weaponModel.remove(this.activeProjectileModel); // Remove from group
+          }
+          // Add and show the new model
+          this.activeProjectileModel = modelToShow;
+          this.weaponModel.add(this.activeProjectileModel); // Add to group
+          this.activeProjectileModel.visible = true;
+          
+          // Position at pocket
+          this.activeProjectileModel.position.copy(restingPocketPos);
+        }
+      } else {
+        // Hide the active projectile model if it's visible or if we're out of ammo
+        if (this.activeProjectileModel) {
+          this.activeProjectileModel.visible = false;
+          // Don't remove from group here, just hide. It will be removed/swapped if charging starts again.
+        }
       }
     }
 
-    // ... (idle animation - unchanged) ...
+    // ... idle animation ... 
     const time = Date.now() / 1000;
     const idleAmount = Math.sin(time * 2) * 0.01;
     this.weaponModel.position.y = this.initialWeaponPosition.y + idleAmount;
