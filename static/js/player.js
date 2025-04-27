@@ -30,11 +30,11 @@ export default class Player {
       playerColor: 0x0000FF, // Blue
       debugMode: false,
       terrainConformFactor: 0.9, // How strongly camera conforms to terrain (0-1),
-      // ADJUST APPLE SPEEDS: Modify these values to change projectile speeds by type
+      // DRAMATICALLY INCREASE APPLE SPEEDS: 10x faster with bigger gaps between types
       projectileSpeeds: { 
-        red: 40.0,     // Red apple speed (default/balanced)
-        yellow: 60.0,  // Yellow apple speed (faster)
-        green: 80.0    // Green apple speed (fastest)
+        red: 200.0,     // 5x faster (was 40)
+        yellow: 400.0,  // 6.7x faster (was 60)
+        green: 800.0    // 10x faster (was 80) - Sniper shot level
       },
     }, options);
 
@@ -439,7 +439,9 @@ export default class Player {
     // Existing weapon firing code...
     if (this.weaponSystem) {
         // startCharging now returns false if no ammo, preventing incorrect animation
-        return this.weaponSystem.startCharging();
+        // Send the currently selected ammo type to determine charge speed
+        const currentAmmoType = this.weaponSystem.currentAmmoType || 'red';
+        return this.weaponSystem.startCharging(currentAmmoType);
     }
     return false;
   }
