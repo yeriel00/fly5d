@@ -92,6 +92,27 @@ export default class AppleGrowthManager {
       // *** CHECK MORE FREQUENTLY ***
     }, 4000); // Check every 4 seconds (was 8)
     // *** END CHECK MORE FREQUENTLY ***
+
+    // ADDED: Add automatic cleanup for excess grounded apples
+    this.cleanupIntervalId = setInterval(() => {
+      if (!this.appleSystem) {
+        clearInterval(this.cleanupIntervalId);
+        return;
+      }
+      
+      // Get current apple counts
+      const counts = this.appleSystem.getAppleCount();
+      
+      // IMPROVED: Less aggressive cleanup with higher threshold
+      if (counts.groundApples > 25) { // Increased from 15 to 25
+        // Get the excess count but remove fewer at once
+        const excessApples = Math.min(counts.groundApples - 25, 3); // Remove max 3 at a time
+        // Log the cleanup
+        console.log(`[AppleGrowthManager] Cleaning up ${excessApples} excess ground apples`);
+        // Remove oldest apples first
+        this._removeOldestGroundApples(excessApples);
+      }
+    }, 10000); // Increased check interval from 5000 to 10000 (10 seconds)
   }
 
   // NEW: adjust grow speed at runtime
@@ -102,12 +123,47 @@ export default class AppleGrowthManager {
     // console.log(`🍎 [GrowthMgr] speedMultiplier set to ${mult}`);
   }
 
+  /**
+   * NEW: Remove oldest apples from the ground to prevent clutter
+   * @param {number} count - Number of apples to remove
+   * @private
+   */
+  _removeOldestGroundApples(count) {
+    if (!this.appleSystem || !this.appleSystem.groundApples) return;
+    
+    // Only remove apples that have been on the ground for a while
+    // IMPROVED: Sort apples by ground time (oldest first) but only consider ones that are at least 15 seconds old
+    const groundedApples = this.appleSystem.groundApples
+      .filter(apple => apple.isGrounded && apple.groundTime > 15) // Increased threshold
+      .sort((a, b) => b.groundTime - a.groundTime);
+    
+    // Remove the requested number of oldest apples
+    const applesToRemove = Math.min(count, groundedApples.length);
+    for (let i = 0; i < applesToRemove; i++) {
+      if (i < groundedApples.length) {
+        const apple = groundedApples[i];
+        const index = this.appleSystem.groundApples.indexOf(apple);
+        if (index !== -1) {
+          // Use the apple system's method to properly remove the apple
+          this.appleSystem._removeGroundApple(index);
+        }
+      }
+    }
+  }
+
   // Add cleanup
   cleanup() {
       if (this.checkIntervalId) {
           clearInterval(this.checkIntervalId);
           this.checkIntervalId = null;
       }
+      
+      // ADDED: Clear the cleanup interval as well
+      if (this.cleanupIntervalId) {
+          clearInterval(this.cleanupIntervalId);
+          this.cleanupIntervalId = null;
+      }
+      
       if (this.appleSystem) {
           this.appleSystem.cleanup();
           this.appleSystem = null;

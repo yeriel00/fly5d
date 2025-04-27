@@ -28,7 +28,7 @@ export default class AppleSystem {
         green:  { value: 3, probability: 0.05, effectMultiplier: 2.0, color: 0x33ff33, unripeColor: 0x44aa44 }
       },
       // --- End Apple Type Config ---
-      groundLifetime: 6000, // Disappear after 60 seconds on ground (was 90)
+      groundLifetime: 30000, // 30 seconds on ground (was 6000)
       sphereRadius: 800,
       getTerrainHeight: null,
       onAppleCollected: null, // Callback signature: (type, value, effectMultiplier, position)
@@ -533,17 +533,20 @@ export default class AppleSystem {
   }
 
   /**
-   * Update falling apples - simplified for performance
+   * Update falling apples - with collision detection between apples
    * @param {number} deltaTime - Time since last update in seconds
    * @private
    */
   _updateFallingApples(deltaTime) {
     // Skip if we have no falling apples
-    if (this.groundApples.length === 0) return;
+    if (this.groundApples.length <= 1) return; // Fast return if only one or none
     
     const gravity = this.options.gravity;
     const sphereRadius = this.options.sphereRadius;
     const getTerrainHeight = this.options.getTerrainHeight;
+    
+    // ADDED: Keep track of newly grounded apples for proper positioning
+    const newlyGroundedApples = [];
     
     // Process each falling apple
     for (let i = this.groundApples.length - 1; i >= 0; i--) {
@@ -551,11 +554,16 @@ export default class AppleSystem {
       
       // Skip apples already on the ground
       if (apple.isGrounded) {
-        // Check lifetime
-        apple.groundTime += deltaTime;
-        if (apple.groundTime > this.options.groundLifetime) {
-          // Apple has rotted away - remove it
-          this._removeGroundApple(i);
+        // Check lifetime - IMPROVED: Only check if we're past 5 seconds to prevent early cleanup
+        if (apple.groundTime > 5) {  // Add 5 second grace period
+          apple.groundTime += deltaTime;
+          if (apple.groundTime > this.options.groundLifetime) {
+            // Only remove if it's really old
+            this._removeGroundApple(i);
+          }
+        } else {
+          // Just increment groundTime but don't check for removal yet
+          apple.groundTime += deltaTime;
         }
         continue;
       }
@@ -565,6 +573,9 @@ export default class AppleSystem {
       
       // Apply gravity (reuse vector)
       apple.velocity.addScaledVector(this._vec3.negate(), gravity * deltaTime * 60);
+      
+      // Check collisions with other falling apples before updating position
+      this._checkAppleCollisions(apple, i);
       
       // Apply velocity (reuse vector)
       this._vec3b.copy(apple.velocity).multiplyScalar(deltaTime);
@@ -580,10 +591,26 @@ export default class AppleSystem {
         apple.isGrounded = true;
         apple.groundTime = 0;
         
-        // Position at ground level
-        apple.position.copy(
-          this._vec3.normalize().multiplyScalar(groundRadius + this.options.appleRadius * 0.7)
-        );
+        // IMPROVED: Add slight random offset when placing on ground
+        // First, get the basic ground position
+        const groundPos = this._vec3.normalize().multiplyScalar(groundRadius + this.options.appleRadius * 0.7);
+        
+        // Create two tangent vectors perpendicular to the surface normal
+        const normal = groundPos.clone().normalize();
+        const tangent1 = new THREE.Vector3(1, 0, 0).cross(normal);
+        if (tangent1.lengthSq() < 0.01) {
+          tangent1.set(0, 1, 0).cross(normal);
+        }
+        tangent1.normalize();
+        const tangent2 = normal.clone().cross(tangent1).normalize();
+        
+        // Add random offset along the surface using the tangent vectors
+        const offsetDistance = this.options.appleRadius * 1.5; // Offset by 1.5x apple radius
+        groundPos.addScaledVector(tangent1, (Math.random() - 0.5) * offsetDistance);
+        groundPos.addScaledVector(tangent2, (Math.random() - 0.5) * offsetDistance);
+        
+        // Use this position instead
+        apple.position.copy(groundPos);
         
         // Add slight random rotation
         apple.mesh.rotation.set(
@@ -591,6 +618,9 @@ export default class AppleSystem {
           Math.random() * Math.PI * 2,
           Math.random() * Math.PI * 2
         );
+        
+        // Track newly grounded apples for post-processing
+        newlyGroundedApples.push(apple);
         
         // Skip bounce animation in performance mode
         if (!this.options.performanceMode && Math.random() < 0.3) {
@@ -614,6 +644,148 @@ export default class AppleSystem {
       
       // Update mesh position
       apple.mesh.position.copy(apple.position);
+    }
+    
+    // ADDED: Resolve collisions between ALL grounded apples
+    this._resolveGroundedAppleCollisions();
+    
+    // ADDED: Specifically check newly grounded apples against all others
+    // This ensures they don't overlap with existing apples
+    if (newlyGroundedApples.length > 0) {
+      this._resolveGroundedAppleCollisions(newlyGroundedApples);
+    }
+  }
+
+  /**
+   * NEW: Resolve collisions between apples on the ground
+   * @param {Array} applesToCheck - Optional array of specific apples to check (otherwise check all)
+   * @private
+   */
+  _resolveGroundedAppleCollisions(applesToCheck = null) {
+    // Get all grounded apples
+    const groundedApples = applesToCheck || this.groundApples.filter(apple => apple.isGrounded);
+    if (groundedApples.length <= 1) return;
+    
+    // Define spacing parameters
+    const minDistance = this.options.appleRadius * 2.2; // Slightly bigger distance to prevent clipping
+    const pushFactor = 0.4; // Stronger push (was 0.3)
+    
+    // Check each apple against all other grounded apples
+    for (let i = 0; i < groundedApples.length; i++) {
+      const apple = groundedApples[i];
+      if (!apple.isGrounded) continue;
+      
+      // Calculate ground normal at this apple's position
+      const normal = apple.position.clone().normalize();
+      
+      // Create tangent plane vectors (these define the 2D surface to push along)
+      const tangent1 = new THREE.Vector3(1, 0, 0).cross(normal);
+      if (tangent1.lengthSq() < 0.01) {
+        tangent1.set(0, 1, 0).cross(normal);
+      }
+      tangent1.normalize();
+      const tangent2 = normal.clone().cross(tangent1).normalize();
+      
+      // Track total displacement for this apple
+      const displacement = new THREE.Vector3();
+      
+      // Check against all other apples (we use all grounded apples, not just the checking group)
+      for (let j = 0; j < this.groundApples.length; j++) {
+        const otherApple = this.groundApples[j];
+        // Skip if not grounded or same as current apple
+        if (!otherApple.isGrounded || otherApple === apple) continue;
+        
+        // Get distance between apples
+        const distance = apple.position.distanceTo(otherApple.position);
+        
+        // If apples are too close
+        if (distance < minDistance && distance > 0.01) { // Avoid division by zero
+          // Direction from other apple to this apple
+          const direction = apple.position.clone().sub(otherApple.position).normalize();
+          
+          // Calculate overlap
+          const overlap = minDistance - distance;
+          
+          // Calculate displacement along the terrain surface
+          // Project the separation direction onto the tangent plane
+          const dot1 = direction.dot(tangent1);
+          const dot2 = direction.dot(tangent2);
+          const surfaceDirection = new THREE.Vector3()
+            .addScaledVector(tangent1, dot1)
+            .addScaledVector(tangent2, dot2)
+            .normalize();
+          
+          // Add this displacement
+          displacement.addScaledVector(surfaceDirection, overlap * pushFactor);
+        }
+      }
+      
+      // Apply cumulative displacement to move the apple along the ground surface
+      if (displacement.length() > 0.01) {
+        // Move the apple
+        apple.position.add(displacement);
+        
+        // Project apple back onto the terrain surface to ensure it stays on the ground
+        const terrainHeight = this.options.getTerrainHeight ? 
+                            this.options.getTerrainHeight(apple.position.clone().normalize()) : 0;
+        const groundRadius = this.options.sphereRadius + terrainHeight;
+        
+        // Calculate the correct surface position
+        const surfacePosition = apple.position.clone().normalize()
+            .multiplyScalar(groundRadius + this.options.appleRadius * 0.7);
+        
+        // Update apple position and mesh
+        apple.position.copy(surfacePosition);
+        apple.mesh.position.copy(apple.position);
+        
+        // IMPORTANT: Reset groundTime to prevent early removal after collision
+        // This ensures apples that just collided won't immediately disappear
+        apple.groundTime = Math.min(apple.groundTime, 1); // Cap at 1 second
+      }
+    }
+  }
+  
+  /**
+   * NEW: Check and handle collisions between apples
+   * @param {Object} apple - The apple to check
+   * @param {number} index - Index of this apple in the array
+   * @private
+   */
+  _checkAppleCollisions(apple, index) {
+    // Skip if apple is already on ground
+    if (apple.isGrounded) return;
+    
+    const appleRadius = this.options.appleRadius;
+    const minDistance = appleRadius * 2; // Minimum distance between apple centers
+    
+    // Check against all other apples
+    for (let j = 0; j < this.groundApples.length; j++) {
+      // Skip self or apples on the ground
+      if (j === index || this.groundApples[j].isGrounded) continue;
+      
+      const otherApple = this.groundApples[j];
+      const distance = apple.position.distanceTo(otherApple.position);
+      
+      // If apples are too close
+      if (distance < minDistance) {
+        // Calculate separation vector (direction from other to this apple)
+        const separationVector = apple.position.clone().sub(otherApple.position).normalize();
+        
+        // Push apart with a force proportional to how much they're overlapping
+        const overlap = minDistance - distance;
+        const forceMagnitude = Math.min(overlap * 0.3, 3.0); // Limit max force
+        
+        // Apply forces to both apples in opposite directions
+        apple.velocity.addScaledVector(separationVector, forceMagnitude);
+        otherApple.velocity.addScaledVector(separationVector, -forceMagnitude);
+        
+        // Add slight random variation to prevent apples from getting stuck together
+        const randomFactor = 0.2;
+        apple.velocity.x += (Math.random() - 0.5) * randomFactor;
+        apple.velocity.z += (Math.random() - 0.5) * randomFactor;
+        otherApple.velocity.x += (Math.random() - 0.5) * randomFactor;
+        otherApple.velocity.z += (Math.random() - 0.5) * randomFactor;
+      }
     }
   }
   
