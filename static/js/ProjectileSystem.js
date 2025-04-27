@@ -30,7 +30,13 @@ export default class ProjectileSystem {
       collidables: null, // Array of object collision data
       showCollisions: false, // Display collision effects
       splashParticleCount: 5, // Number of particles in collision splash
-      debugCollisions: false // New option to log collision details
+      debugCollisions: false, // New option to log collision details
+      // ADDED: Configure apple sizes by type
+      projectileRadiusByType: {
+        red: 3.0,     // Standard size
+        yellow: 2.5,  // Slightly smaller
+        green: 2.0    // Smallest
+      }
     }, options);
     
     // Add enableCollisionLogging flag that can be set externally
@@ -87,8 +93,11 @@ export default class ProjectileSystem {
     // Get the type-specific color
     const color = this._getProjectileColor(type);
     
+    // MODIFIED: Get size based on projectile type
+    const projectileRadius = this.options.projectileRadiusByType[type] || this.options.projectileRadius;
+    
     // Create geometry and material based on type
-    const geometry = new THREE.SphereGeometry(this.options.projectileRadius, 12, 8);
+    const geometry = new THREE.SphereGeometry(projectileRadius, 12, 8);
     const material = new THREE.MeshLambertMaterial({ 
       color: color,
       // Add emissive for all types - apply to red as well for consistency
@@ -99,22 +108,23 @@ export default class ProjectileSystem {
     mesh.castShadow = true;
     mesh.position.copy(position);
     
-    // Add stem to apple
+    // MODIFIED: Scale stem based on projectile size
     const stemGeometry = new THREE.CylinderGeometry(
-      this.options.projectileRadius * 0.1, 
-      this.options.projectileRadius * 0.1,
-      this.options.projectileRadius * 0.5, 
+      projectileRadius * 0.1, 
+      projectileRadius * 0.1,
+      projectileRadius * 0.5, 
       4
     );
     const stemMaterial = new THREE.MeshLambertMaterial({ color: 0x553311 });
     const stem = new THREE.Mesh(stemGeometry, stemMaterial);
     
     // Position stem at top of apple
-    stem.position.y = this.options.projectileRadius;
+    stem.position.y = projectileRadius;
     mesh.add(stem);
     
     // Add subtle glow for ALL types, including red
-    const glowSize = this.options.projectileRadius * 1.3;
+    // MODIFIED: Scale glow based on projectile size
+    const glowSize = projectileRadius * 1.3;
     const glowGeometry = new THREE.SphereGeometry(glowSize, 16, 12);
     
     // Choose appropriate glow color based on type
@@ -145,6 +155,7 @@ export default class ProjectileSystem {
     this.scene.add(mesh);
     
     // Create projectile object
+    // ADDED: Store the actual radius used with this projectile
     const projectile = {
       position: position.clone(),
       lastPosition: position.clone(), // FIXED: Initialize lastPosition property
@@ -156,14 +167,15 @@ export default class ProjectileSystem {
       bounceCount: 0,
       bounces: 0, // FIXED: Add missing bounces property
       maxBounces: 3, // FIXED: Initialize with default max bounces
-      createdAt: Date.now() // FIXED: Initialize createdAt timestamp for lifetime checks
+      createdAt: Date.now(), // FIXED: Initialize createdAt timestamp for lifetime checks
+      radius: projectileRadius // Store the actual radius used
     };
     
     // Add to active projectiles
     this.projectiles.push(projectile);
     
-    // Log projectile creation with type and color
-    console.log(`[ProjectileSystem] Created ${type} projectile at ${position.toArray()}. Color: ${color.toString(16)}`);
+    // Log projectile creation with type and size
+    console.log(`[ProjectileSystem] Created ${type} projectile (radius: ${projectileRadius}) at ${position.toArray()}. Color: ${color.toString(16)}`);
     
     return projectile;
   }
@@ -265,7 +277,7 @@ export default class ProjectileSystem {
     // Get projectile info
     const fromPos = projectile.lastPosition;
     const toPos = projectile.position;
-    const projRadius = this.options.projectileRadius;
+    const projRadius = projectile.radius || this.options.projectileRadius; // Use stored radius
     
     // Calculate movement vector and distance
     const moveVector = toPos.clone().sub(fromPos);
@@ -531,7 +543,8 @@ export default class ProjectileSystem {
       }
     } else if (obj.mesh?.userData?.isRock) {
       // For rocks, create a spark effect
-      this._createSparkEffect(collisionPoint);
+      // UPDATED: Pass projectile type to createSparkEffect
+      this._createSparkEffect(collisionPoint, projectile.type);
     }
     
     // Return true to have the projectile removed
@@ -541,21 +554,37 @@ export default class ProjectileSystem {
   /**
    * Create spark effect for rock impacts
    * @param {THREE.Vector3} position - Impact position
+   * @param {string} type - Projectile type [ADDED]
    * @private
    */
-  _createSparkEffect(position) {
+  _createSparkEffect(position, type = 'red') { // Added type parameter with default
     // Only create if showCollisions is true
     if (!this.options.showCollisions) return;
     
     // Create some tiny bright particles
     const particleCount = 3;
     
+    // UPDATED: Determine base color based on projectile type
+    let baseColor;
+    switch (type) {
+      case 'yellow':
+        baseColor = 0xffffbb; // Yellowish-white
+        break;
+      case 'green':
+        baseColor = 0xccffcc; // Greenish-white
+        break;
+      case 'red':
+      default:
+        baseColor = 0xffffbb; // Default bright yellow-white
+        break;
+    }
+    
     for (let i = 0; i < particleCount; i++) {
       // Create tiny bright particle
       const size = 0.2 + Math.random() * 0.2;
       const geometry = new THREE.SphereGeometry(size, 4, 4);
       const material = new THREE.MeshBasicMaterial({
-        color: 0xffffbb, // Bright yellow-white
+        color: baseColor, // Use the color based on type
         transparent: true,
         opacity: 0.9
       });
@@ -594,8 +623,6 @@ export default class ProjectileSystem {
     }
   }
   
-  /**
-  // Note: Tree collision handling was moved into _handleObjectCollision
   /**
    * Update projectile physics
    * @param {Object} projectile - The projectile to update
@@ -777,7 +804,21 @@ export default class ProjectileSystem {
   _createCollisionEffect(position, type) {
     // Use minimal particles for performance
     const particleCount = this.options.splashParticleCount;
-    const color = type === 'goldenApple' ? 0xffdd00 : 0xff2200;
+    
+    // UPDATED: Get appropriate color based on projectile type
+    let color;
+    switch (type) {
+      case 'yellow':
+        color = 0xffdd00; // Yellow
+        break;
+      case 'green':
+        color = 0x33ff33; // Green
+        break;
+      case 'red':
+      default:
+        color = 0xff2200; // Red (default)
+        break;
+    }
     
     // Create particles
     for (let i = 0; i < particleCount; i++) {
@@ -785,7 +826,7 @@ export default class ProjectileSystem {
       const size = 0.4 + Math.random() * 0.4;
       const geometry = new THREE.SphereGeometry(size, 6, 6);
       const material = new THREE.MeshBasicMaterial({
-        color: color,
+        color: color, // Use the color we determined from the type
         transparent: true,
         opacity: 0.8
       });

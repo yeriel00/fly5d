@@ -30,13 +30,12 @@ export default class Player {
       playerColor: 0x0000FF, // Blue
       debugMode: false,
       terrainConformFactor: 0.9, // How strongly camera conforms to terrain (0-1),
-      // *** Add projectile speeds config ***
-      projectileSpeeds: { // Base speeds for different ammo types
-          red: 40.0,
-          yellow: 55.0,
-          green: 70.0
+      // ADJUST APPLE SPEEDS: Modify these values to change projectile speeds by type
+      projectileSpeeds: { 
+        red: 40.0,     // Red apple speed (default/balanced)
+        yellow: 60.0,  // Yellow apple speed (faster)
+        green: 80.0    // Green apple speed (fastest)
       },
-      // *** End projectile speeds config ***
     }, options);
 
     // *** Initialize multi-ammo storage ***

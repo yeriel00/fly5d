@@ -502,7 +502,10 @@ export default class WeaponSystem {
   _createRedAppleModel() {
     const appleGroup = new THREE.Group();
     const appleGeometry = new THREE.SphereGeometry(0.1, 12, 12);
-    const appleMaterial = new THREE.MeshLambertMaterial({ color: 0xff2200 });
+    const appleMaterial = new THREE.MeshLambertMaterial({ 
+      color: 0xff2200,
+      emissive: new THREE.Color(0xff2200).multiplyScalar(0.3) // Add emissive to match other apples
+    });
     const apple = new THREE.Mesh(appleGeometry, appleMaterial);
     appleGroup.add(apple);
     const stemGeometry = new THREE.CylinderGeometry(0.01, 0.01, 0.05, 4);
@@ -510,6 +513,18 @@ export default class WeaponSystem {
     const stem = new THREE.Mesh(stemGeometry, stemMaterial);
     stem.position.set(0, 0.08, 0);
     appleGroup.add(stem);
+    
+    // ADDED: Create glow effect for red apple (same as yellow and green apples)
+    const glowGeometry = new THREE.SphereGeometry(0.12, 12, 12);
+    const glowMaterial = new THREE.MeshBasicMaterial({ 
+      color: 0xff4400, // Reddish glow
+      transparent: true, 
+      opacity: 0.2, 
+      side: THREE.BackSide 
+    });
+    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+    appleGroup.add(glow);
+    
     appleGroup.visible = false; // Start hidden
     return appleGroup;
   }
