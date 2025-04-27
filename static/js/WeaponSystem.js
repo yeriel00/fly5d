@@ -360,6 +360,10 @@ export default class WeaponSystem {
     } else {
       this._playSound('empty', 0.6);
       console.log(`[WeaponSystem] release() failed: No ammo for charged type ${ammoType} at time of release.`);
+      
+      // ADDED: Try to auto-switch to another ammo type if available
+      this.switchToNextAvailableAmmo();
+      
       return {
         canFire: false,
         power: power, // Still return power/type even if no ammo
@@ -402,6 +406,69 @@ export default class WeaponSystem {
     // No longer showing central notification - removed _showAmmoSwitchNotification call
     
     return this.currentAmmoType;
+  }
+
+  /**
+   * NEW: Switch to the next available ammo type if current is depleted
+   * @returns {string|null} New ammo type or null if no change or no ammo available
+   */
+  switchToNextAvailableAmmo() {
+    // No need to switch if current type still has ammo
+    if (!this.ammo || !this.currentAmmoType || this.ammo[this.currentAmmoType] > 0) {
+      return null;
+    }
+    
+    // Define search order based on current type
+    let searchOrder;
+    switch (this.currentAmmoType) {
+      case 'red':
+        searchOrder = ['yellow', 'green'];
+        break;
+      case 'yellow':
+        searchOrder = ['green', 'red'];
+        break;
+      case 'green':
+        searchOrder = ['red', 'yellow'];
+        break;
+      default:
+        searchOrder = ['red', 'yellow', 'green'];
+    }
+    
+    // Find the first type with ammo
+    for (const type of searchOrder) {
+      if (this.ammo[type] > 0) {
+        this.currentAmmoType = type;
+        this._updateAmmoDisplay();
+        this.updateModel();
+        
+        // Play a sound to indicate weapon switch
+        if (this._soundActions && this._soundActions.switchWeapon) {
+          this._soundActions.switchWeapon();
+        }
+        
+        console.log(`[WeaponSystem] Auto-switched to ${type} (${this.ammo[type]} remaining)`);
+        return type;
+      }
+    }
+    
+    // No ammo available for any type
+    return null;
+  }
+
+  /**
+   * Set the current ammo type directly
+   * @param {string} type - The ammo type to switch to
+   */
+  setAmmoType(type) {
+    if (this.availableAmmoTypes.includes(type)) {
+      this.currentAmmoType = type;
+      this._updateAmmoDisplay();
+      this.updateModel();
+      
+      console.log(`[WeaponSystem] Ammo type set to ${type}`);
+      return type;
+    }
+    return null;
   }
 
   /**

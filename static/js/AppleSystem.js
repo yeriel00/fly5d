@@ -388,19 +388,33 @@ export default class AppleSystem {
    */
   _updateGrowingApples(deltaTime) {
     let updatedCount = 0;
+    
+    // ADDED: Track if system might be stalled (no growing apples)
+    this._lastGrowingUpdateTime = Date.now();
+    
+    // Store total number of apples in different states for diagnostics
+    let growing = 0;
+    let ripe = 0;
+    
     Object.values(this.growthPoints).forEach(points => {
       points.forEach(point => {
-        if (!point.hasApple || point.growthProgress >= 1.0) return;
-
+        if (!point.hasApple || point.growthProgress >= 1.0) {
+          if (point.hasApple && point.growthProgress >= 1.0) {
+            ripe++; // Count ripe apples
+          }
+          return;
+        }
+  
+        growing++; // Count growing apples
         point.growthProgress += (deltaTime / this.options.growthTime) * point.growthRate;
         point.growthProgress = Math.min(1.0, point.growthProgress);
         updatedCount++;
-
+  
         if (point.apple) {
           const growthCurve = this._easeOutCubic(point.growthProgress);
           const scale = 0.3 + growthCurve * 0.7;
           point.apple.scale.set(scale, scale, scale);
-
+  
           // Change material when ripe
           if (point.growthProgress >= 1.0) {
              const type = point.appleType;
@@ -424,10 +438,36 @@ export default class AppleSystem {
         }
       });
     });
-    // Add occasional log
-    // if (updatedCount > 0 && this.updateCounter % 60 === 0) { // Log every ~second if updates happened
-    //     console.log(`[AppleSystem] Updated growth for ${updatedCount} apples.`);
-    // }
+    
+    // ADDED: Store statistics for diagnostics
+    if (this.updateCounter % 60 === 0) {
+      this._appleStats = {
+        growing,
+        ripe,
+        updated: updatedCount,
+        time: Date.now()
+      };
+    }
+    
+    // ADDED: Detect and fix stalled system
+    // If we have no growing apples but have empty growth points, try to start some new ones
+    if (growing === 0 && this.updateCounter % 300 === 0) { // Check every ~5 seconds
+      let emptyPoints = 0;
+      Object.values(this.growthPoints).forEach(points => {
+        points.forEach(point => {
+          if (!point.hasApple) {
+            emptyPoints++;
+          }
+        });
+      });
+      
+      // If we have empty growth points but nothing growing, 
+      // force some growth to keep the system running
+      if (emptyPoints > 0) {
+        console.log(`[AppleSystem] Auto-recovery: Found ${emptyPoints} empty points but no growing apples. Starting new growth.`);
+        this.forceGrowNewApples(Math.min(emptyPoints, 5)); // Start up to 5 new apples
+      }
+    }
   }
 
   /**
@@ -798,35 +838,44 @@ export default class AppleSystem {
     // Calculate chance of ripe apple falling
     const chancePerApple = this.options.fallProbability * deltaTime;
     let checkedRipeApples = 0; // Count how many ripe apples we check
-
+    let droppedApples = 0; // ADDED: Track dropped apples
+  
+    // ADDED: Random multiplier for more unpredictable drop patterns
+    const randomMultiplier = Math.random() * 0.5 + 0.75; // Range: 0.75-1.25
+  
+    // ADDED: Detect and fix stalled system
+    const now = Date.now();
+    if (this._lastAppleDropTime && now - this._lastAppleDropTime > 60000) {
+      // If no apples dropped in the last minute, increase chance temporarily
+      console.log("[AppleSystem] No apples dropped for 60 seconds, increasing drop probability.");
+      chancePerApple *= 10; // Much higher chance for at least one drop
+    }
+  
     // Check each tree and its growth points
     Object.values(this.growthPoints).forEach(points => {
       points.forEach(point => {
         // Skip points without ripe apples
         if (!point.hasApple || point.growthProgress < 1.0) return;
-
+  
         checkedRipeApples++; // Increment count of ripe apples checked
-
-        // *** ADDED LOGGING ***
-        const randomCheck = Math.random();
-        // console.log(`[AppleSystem] Checking drop for ripe apple ${point.apple.id}. Chance: ${chancePerApple.toFixed(4)}, Rolled: ${randomCheck.toFixed(4)}`); // Optional: uncomment for verbose logging
-        // *** END ADDED LOGGING ***
-
-        if (randomCheck < chancePerApple) {
-          // *** ADDED LOG ***
-        //   console.log(`[AppleSystem] SUCCESS! Dropping apple ${point.apple.id}.`);
-          // *** END ADDED LOG ***
+  
+        // Apply the adjusted probability
+        if (Math.random() < chancePerApple * randomMultiplier) {
           this._detachApple(point);
+          droppedApples++;
+          this._lastAppleDropTime = now; // Update the last drop time
         }
       });
     });
-
-    // *** ADDED LOG ***
-    // Log only if we actually checked any ripe apples to reduce noise
-    if (checkedRipeApples > 0 && this.updateCounter % 60 === 0) { // Log roughly every second if checking
-        // console.log(`[AppleSystem] Checked ${checkedRipeApples} ripe apples for dropping.`);
+  
+    // ADDED: If we have ripe apples but none are dropping, force at least one
+    if (checkedRipeApples > 0 && droppedApples === 0 && this.updateCounter % 600 === 0) { // Every ~10 seconds
+      if (Math.random() < 0.3) { // 30% chance to force drop
+        console.log(`[AppleSystem] No apples dropping naturally. Force dropping 1 of ${checkedRipeApples} ripe apples.`);
+        this.forceDropRandomApple();
+        this._lastAppleDropTime = now; // Update the last drop time
+      }
     }
-    // *** END ADDED LOG ***
   }
   
   /**
@@ -999,16 +1048,16 @@ export default class AppleSystem {
    */
   _collectApple(type, effectMultiplier, position) {
     const value = this.options.appleTypes[type]?.value || 1; // Get value from config
-
+  
     // Update stats based on type
     if (type === 'red') this.stats.applesCollected++;
     else if (type === 'yellow') this.stats.goldenApplesCollected++; // Using golden for yellow for now
     else if (type === 'green') this.stats.goldenApplesCollected++; // Using golden for green for now
     // TODO: Add specific stats counters if needed later
-
+  
     this.stats.totalCollected += value;
     // console.log(`[AppleSystem] Collected ${type} apple! Value: ${value}, Multiplier: ${effectMultiplier}`);
-
+  
     // Call collection callback with type, value, and multiplier
     if (this.options.onAppleCollected) {
       this.options.onAppleCollected(
@@ -1018,7 +1067,12 @@ export default class AppleSystem {
         position
       );
     }
-
+  
+    // ADDED: Show apple pickup notification if UI is available
+    if (window.game && window.game.ui && typeof window.game.ui.showNotification === 'function') {
+      window.game.ui.showNotification(`Picked up ${type} apple (+${value})`, 1000, type);
+    }
+  
     // Skip effect in performance mode
     if (!this.options.performanceMode && 
        (type === 'goldenApple' || Math.random() < 0.3)) {

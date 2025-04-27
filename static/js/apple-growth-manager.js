@@ -89,6 +89,42 @@ export default class AppleGrowthManager {
         // console.log(`🔄 [GrowthMgr] Low on tree apples (${counts.treeApples}/${Math.round(desiredAppleCount)}). Trying to grow ${needed} new ones.`);
         this.appleSystem.forceGrowNewApples(needed);
       }
+      
+      // ADDED: Periodically check if the system is stalled
+      if (this.lastTreeCount !== undefined && this.lastTreeCount > 0 && totalTrees === 0) {
+        console.warn("⚠️ [GrowthMgr] Tree count dropped to zero! Attempting to recover...");
+        // Try to rediscover trees
+        this.appleSystem.findAppleTrees();
+        // If that didn't work and we have the global diagnostics, use it
+        if (this.appleSystem.appleTrees.length === 0 && window.treeAppleDiagnostics) {
+          window.treeAppleDiagnostics.resetAppleSystem();
+        }
+      }
+      
+      // Store current tree count for next check
+      this.lastTreeCount = totalTrees;
+      
+      // ADDED: If no apples are growing or ripe, force some to grow
+      if (counts.treeApples === 0) {
+        console.log("⚠️ [GrowthMgr] No apples on trees! Forcing immediate growth.");
+        const result = this.appleSystem.forceGrowNewApples(totalTrees * 2);
+        if (result.grown > 0) {
+          // Fast-forward growth for some
+          Object.values(this.appleSystem.growthPoints).forEach(points => {
+            points.forEach(point => {
+              if (point.hasApple && Math.random() < 0.3) {
+                point.growthProgress = 1.0; // Make some fully grown immediately
+              }
+            });
+          });
+        }
+      }
+      
+      // ADDED: Force drop an apple occasionally to ensure the system is working
+      if (counts.treeApples > 5 && counts.groundApples < 5 && Math.random() < 0.3) {
+        console.log("🍏 [GrowthMgr] Force dropping a random apple to keep system active");
+        this.appleSystem.forceDropRandomApple();
+      }
       // *** CHECK MORE FREQUENTLY ***
     }, 4000); // Check every 4 seconds (was 8)
     // *** END CHECK MORE FREQUENTLY ***

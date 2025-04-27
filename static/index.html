@@ -29,7 +29,7 @@
         <li>Mouse - Look around</li>
         <li>Space - Jump</li>
         <li><strong>Left Shift - Crouch</strong> (hold or double-tap to toggle)</li>
-        <li>C or Right-click - Switch ammo type</li>
+        <li>Q - Switch weapon</li>
         <li>Left Mouse - Fire weapon</li>
       </ul>
       <p><strong>Console Commands:</strong></p>
@@ -58,10 +58,15 @@
   <!-- Load main.js first -->
   <script type="module" src="/static/js/main.js"></script>
   
+  <!-- Load maximum performance optimizers BEFORE other scripts -->
+  <script type="module" src="/static/js/max-performance.js"></script>
+  <script type="module" src="/static/js/instant-apples.js"></script>
+  
+  <!-- Load tree-apple-diagnostics before the other scripts -->
+  <script type="module" src="/static/js/tree-apple-diagnostics.js"></script>
+  
   <!-- Load tree fix script -->
   <script type="module" src="/static/js/tree-fixer-pro.js"></script>
-  
-  <!-- REMOVED: References to ammo-cycling-fix.js and simple-ammo-switcher.js -->
   
   <script>
     // Hide loading screen when content loaded
@@ -92,52 +97,42 @@
         }
       });
 
-      // Add emergency fix command
-      window.fixAmmo = function() {
-        if (window.player) {
-          // Force add ammo
-          window.player.addAmmo('red', 10);
-          window.player.addAmmo('yellow', 10);
-          window.player.addAmmo('green', 10);
-          
-          // Force update weapon system
-          if (window.player.weaponSystem) {
-            // Make sure weapon system can see the ammo
-            window.player.weaponSystem.ammo = window.player.ammo;
-            
-            // Force UI update
-            if (typeof window.player.weaponSystem._updateAmmoDisplay === 'function') {
-              window.player.weaponSystem._updateAmmoDisplay();
-            }
-            
-            // Force model update
-            if (typeof window.player.weaponSystem.updateModel === 'function') {
-              window.player.weaponSystem.updateModel();
-            }
-          }
-          
-          console.log("Emergency ammo fix applied! You should have 10 of each ammo type now.");
-          return "Ammo fixed!";
+      // Run instant fixes with 100ms delay
+      setTimeout(() => {
+        console.log("🚀 Running immediate performance & visual fixes");
+        
+        if (window.fixGame) {
+          window.fixGame();
         }
-        return "Player not available";
-      };
+      }, 100);
+      
+      // Make sure apples appear as soon as possible
+      setTimeout(() => {
+        if (window.addMoreApples) {
+          window.addMoreApples(10); // Create 10 immediately visible apples
+        }
+      }, 3000);
       
       // Give player ammo early
       setTimeout(() => {
         if (window.player && window.player.addAmmo) {
-          // Update to give multiple ammo types
-          window.player.addAmmo('red', 20);
-          window.player.addAmmo('yellow', 15);
-          window.player.addAmmo('green', 10);
-          console.log("✅ Gave player starting ammo");
-          
-          // Force weapon system update
-          if (window.player.weaponSystem) {
-            window.player.weaponSystem._updateAmmoDisplay();
-            window.player.weaponSystem.updateModel();
-          }
+          window.player.addAmmo('apple', 50); // Give 50 apples
+          console.log("✅ Gave player 50 apple ammo");
         }
       }, 3500);
+    });
+
+    // Add diagnostic command to help message
+    document.addEventListener('DOMContentLoaded', () => {
+      const helpOverlay = document.getElementById('help-overlay');
+      if (helpOverlay) {
+        const commandsList = helpOverlay.querySelector('ul:last-of-type');
+        if (commandsList) {
+          const newItem = document.createElement('li');
+          newItem.innerHTML = '<strong>fixAppleTrees()</strong> - Repair apples if they stop falling';
+          commandsList.appendChild(newItem);
+        }
+      }
     });
   </script>
 </body>
