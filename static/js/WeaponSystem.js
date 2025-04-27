@@ -28,7 +28,13 @@ export default class WeaponSystem {
       projectileRadius: 0.8, // Use radius from Player options
       launchOffset: 1.5, // Reduced offset
       chargeTime: 1.5, // Time in seconds to fully charge
-      collidables: null
+      collidables: null,
+      // ADD type-specific charge speeds
+      chargeSpeedByType: {
+        red: 1.5,     // Standard charge time (was 1.5s for all types)
+        yellow: 0.8,  // Faster charge
+        green: 0.4    // Almost instant charge
+      }
     }, options);
 
     // Create projectile system with collidables
@@ -156,9 +162,13 @@ export default class WeaponSystem {
 
   /**
    * Start charging the current weapon
+   * @param {string} ammoType - The ammo type being charged (for speed calculation)
    * @returns {boolean} Success
    */
-  startCharging() {
+  startCharging(ammoType = null) {
+    // If ammoType not provided, use current selection
+    ammoType = ammoType || this.currentAmmoType;
+    
     // *** Check ammo for the CURRENTLY SELECTED type ***
     if (!this.ammo || this.ammo[this.currentAmmoType] <= 0) {
       console.log(`[WeaponSystem] No ammo available for ${this.currentAmmoType}`);
@@ -175,15 +185,20 @@ export default class WeaponSystem {
 
     this.isCharging = true;
     this.chargeStartTime = Date.now();
-    // *** Initialize chargeState with current ammo type ***
+    
+    // Get charge speed based on type
+    const chargeSpeed = this.options.chargeSpeedByType[ammoType] || this.options.chargeTime;
+    
+    // *** Initialize chargeState with current ammo type and its charge speed ***
     this.chargeState = {
         power: 0,
         elapsed: 0,
-        ammoType: this.currentAmmoType // Store the type being charged
+        ammoType: this.currentAmmoType, // Store the type being charged
+        chargeTime: chargeSpeed // Store type-specific charge time
     };
     // *** End initialize chargeState ***
 
-    console.log(`[WeaponSystem] Charging ${this.currentAmmoType} weapon`);
+    console.log(`[WeaponSystem] Charging ${this.currentAmmoType} weapon with charge time: ${chargeSpeed}s`);
     this._updateModelAnimation('charge'); // Trigger charge animation
 
     // Show charge UI if successful
@@ -271,13 +286,15 @@ export default class WeaponSystem {
     if (!this.isCharging || !this.chargeState) return null;
 
     const elapsed = (Date.now() - this.chargeStartTime) / 1000;
-    const power = Math.min(elapsed / this.options.chargeTime, 1.0);
+    
+    // Use type-specific charge time from chargeState
+    const chargeTime = this.chargeState.chargeTime || this.options.chargeTime;
+    const power = Math.min(elapsed / chargeTime, 1.0);
 
     // Update the existing chargeState object
     this.chargeState.power = power;
     this.chargeState.elapsed = elapsed;
-    // ammoType remains as it was when charging started
-
+    
     // Update charge UI with current power
     this._updateChargeUI(power);
 

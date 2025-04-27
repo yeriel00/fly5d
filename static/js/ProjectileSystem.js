@@ -36,7 +36,9 @@ export default class ProjectileSystem {
         red: 3.0,     // Standard size
         yellow: 2.5,  // Slightly smaller
         green: 2.0    // Smallest
-      }
+      },
+      // UPDATED: Better collision detection for fast projectiles
+      CHECK_POINTS: 8,  // Increased from 3 to handle faster speeds
     }, options);
     
     // Add enableCollisionLogging flag that can be set externally
@@ -359,7 +361,7 @@ export default class ProjectileSystem {
       }
       
       // Check for collision with sphere along movement path
-      const CHECK_POINTS = 3; // Check multiple points along movement path
+      const CHECK_POINTS = this.options.CHECK_POINTS || 8; // Use more check points for faster projectiles
       
       for (let t = 0; t <= CHECK_POINTS; t++) {
         // Calculate position at this point along path (0.0 to 1.0)
@@ -639,8 +641,11 @@ export default class ProjectileSystem {
       this.options.gravity * deltaTime * 60
     );
     
-    // Calculate new position
-    this._vec3.copy(projectile.velocity).multiplyScalar(deltaTime);
+    // ADDED: Cap max delta for physics at 1/30 to prevent tunneling with very fast projectiles
+    const effectiveDelta = Math.min(deltaTime, 1/30); 
+    
+    // Apply velocity (with capped delta)
+    this._vec3.copy(projectile.velocity).multiplyScalar(effectiveDelta);
     this._vec3b.copy(projectile.position).add(this._vec3);
     
     // Check for terrain collision

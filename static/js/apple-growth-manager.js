@@ -29,7 +29,7 @@ export default class AppleGrowthManager {
       growthTime: 10 / this.cfg.speedMultiplier, // Use base time from AppleSystem
       growthProbability: 0.25 * this.cfg.speedMultiplier, // Use base prob from AppleSystem
       fallProbability: 0.15, // Fall probability is high enough, maybe don't multiply
-      appleRadius: 3.0,
+      appleRadius: 2.0,
       groundLifetime: 60, // Use shorter lifetime from AppleSystem
       performanceMode: false
     });
