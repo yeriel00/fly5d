@@ -509,6 +509,22 @@ export default class Player {
       this.ammo[ammoTypeToConsume]--;
       console.log(`Player#releaseWeapon -> Ammo after: ${this.ammo[ammoTypeToConsume]}`);
       
+      // ADDED: Check if we just used the last ammo of this type
+      if (this.ammo[ammoTypeToConsume] === 0 && this.weaponSystem) {
+        console.log(`Player#releaseWeapon -> Used last ${ammoTypeToConsume} apple, trying to auto-switch...`);
+        // Auto-switch to next available ammo type
+        const newType = this.weaponSystem.switchToNextAvailableAmmo();
+        if (newType) {
+          console.log(`Player#releaseWeapon -> Auto-switched to ${newType} ammo`);
+          // Show a hint to the player
+          if (window.game && window.game.ui && typeof window.game.ui.showNotification === 'function') {
+            window.game.ui.showNotification(`Switched to ${newType} apples`, 2000);
+          }
+        } else {
+          console.log(`Player#releaseWeapon -> No other ammo available`);
+        }
+      }
+      
       // MOST IMPORTANT: Always force UI and model updates after shooting
       if (this.weaponSystem) {
         if (typeof this.weaponSystem._updateAmmoDisplay === 'function') {
@@ -613,17 +629,35 @@ export default class Player {
   addAmmo(type, amount) {
     // *** Handle red, yellow, green types ***
     if (this.ammo.hasOwnProperty(type)) {
+      // ADDED: Check if player had zero of all ammo types before adding this
+      const hadNoAmmo = Object.values(this.ammo).every(count => count === 0);
+      
+      // Add the ammo
       this.ammo[type] = Math.max(0, this.ammo[type] + amount);
       console.log(`Player Ammo: Added ${amount} ${type}. Total ${type}: ${this.ammo[type]}`);
       
-      // ADDED: Update the UI display whenever ammo is added
+      // ADDED: Auto-switch if this is the first ammo of any type the player gets
+      if (hadNoAmmo && amount > 0 && this.weaponSystem) {
+        // If we're adding apples and player had none of any type before
+        if (this.weaponSystem.currentAmmoType !== type) {
+          console.log(`Auto-switching to ${type} apples (first pickup)`);
+          this.weaponSystem.currentAmmoType = type;
+          
+          // Show notification if UI supports it
+          if (window.game && window.game.ui && typeof window.game.ui.showNotification === 'function') {
+            window.game.ui.showNotification(`Loaded ${type} apples`, 2000);
+          }
+        }
+      }
+      
+      // Update the UI display whenever ammo is added
       if (this.weaponSystem && typeof this.weaponSystem._updateAmmoDisplay === 'function') {
         // Update the ammo display UI
         this.weaponSystem._updateAmmoDisplay();
         
         // Also check if we need to update the model 
         // (e.g. if player had 0 of this type before but now has some)
-        if (amount > 0 && this.weaponSystem.currentAmmoType === type) {
+        if (amount > 0) {
           if (typeof this.weaponSystem.updateModel === 'function') {
             this.weaponSystem.updateModel();
           }
