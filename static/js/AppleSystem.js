@@ -965,65 +965,68 @@ export default class AppleSystem {
   }
   
   /**
-   * Check if player can collect any apples - simplified for performance
+   * Check if player can collect any apples - enhanced to collect all apple types
    * @param {THREE.Vector3} playerPosition - Player position
    * @private
    */
   _checkAppleCollection(playerPosition) {
-    // Use single collection radius for simplicity
-    const collectionRadius = 10.0;
+    // INCREASED: Use larger collection radius for easier grabbing
+    const collectionRadius = 15.0; // Increased from 10.0
     
     // First check ground apples - they're more important
     for (let i = this.groundApples.length - 1; i >= 0; i--) {
       const apple = this.groundApples[i];
       
-      // Skip apples still falling
-      if (!apple.isGrounded) continue;
+      // MODIFIED: Remove the check that skips falling apples so we can collect them mid-air
+      // if (!apple.isGrounded) continue; <-- REMOVED THIS LINE to allow collecting falling apples
       
       // Check distance to player
       const distance = playerPosition.distanceTo(apple.position);
       
       if (distance < collectionRadius) {
+        // ADDED: Show feedback about apple type based on whether it was falling
+        const appleStatus = apple.isGrounded ? "ground" : "falling";
+        console.log(`Collected ${apple.appleType} apple (${appleStatus})!`);
+        
         // Collect this apple
-        this._collectApple(apple.appleType, apple.effectMultiplier, apple.position); // Pass type and multiplier
+        this._collectApple(apple.appleType, apple.effectMultiplier, apple.position);
         
         // Remove from scene and list
         this._removeGroundApple(i);
       }
     }
     
-    // Then check tree apples - but only check a few per frame to distribute work
-    // Divide checks across multiple frames
+    // Then check tree apples - IMPROVED to make it easier to get tree apples
     let checkedCount = 0;
-    const maxChecksPerFrame = 10; // Limit how many we check per frame
+    const maxChecksPerFrame = 20; // INCREASED from 10 to check more trees per frame
     
     for (const treeId in this.growthPoints) {
       const points = this.growthPoints[treeId];
       
-      // Only process tree apples every Nth frame, where N is number of trees
-      // This distributes the processing across frames
-      if (this.updateCounter % Object.keys(this.growthPoints).length !== 
-          Object.keys(this.growthPoints).indexOf(treeId)) {
-        continue;
-      }
+      // Check every tree every frame for more consistent collection
+      // REMOVED the frame-skipping check to check all trees every frame
       
       for (const point of points) {
         // Limit checks per frame
         if (checkedCount >= maxChecksPerFrame) break;
         
-        // Skip points without ripe apples
-        if (!point.hasApple || point.growthProgress < 0.8) continue;
+        // MODIFIED: Also allow collecting unripe apples that are at least 50% grown
+        if (!point.hasApple || point.growthProgress < 0.5) continue; // Was 0.8, now 0.5
         
         checkedCount++;
         
         // Check distance to player
         const distance = playerPosition.distanceTo(point.position);
         
-        if (distance < collectionRadius * 0.7) {
+        // INCREASED collection radius for tree apples to make them easier to grab
+        if (distance < collectionRadius * 1.2) { // 20% larger radius for tree apples
           // Collect this apple
           const type = point.appleType;
           const multiplier = point.effectMultiplier;
           const position = point.position.clone();
+          
+          // Add visual/audio feedback for tree apple collection
+          console.log(`Collected ${type} apple directly from tree!`);
           
           // Remove apple from tree
           this.scene.remove(point.apple);
@@ -1521,5 +1524,39 @@ export default class AppleSystem {
     // It causes double-collection of apples when both this and
     // _checkAppleCollection are called in the same frame
     console.warn("[AppleSystem] checkPlayerCollision is deprecated - use _checkAppleCollection instead");
+  }
+
+  /**
+   * Force apples to be more grabbable by making them slower and larger
+   */
+  improveAppleGrabbability() {
+    // Slow down falling apples to make them easier to catch
+    this.options.gravity *= 0.6; // 40% slower falling
+    
+    // Make tree apples more visible
+    Object.values(this.growthPoints).forEach(points => {
+      points.forEach(point => {
+        if (point.hasApple && point.apple) {
+          // Increase the size of the apple by 25%
+          point.apple.scale.multiplyScalar(1.25);
+        }
+      });
+    });
+    
+    // Make falling apples larger and slower
+    this.groundApples.forEach(apple => {
+      if (!apple.isGrounded && apple.mesh) {
+        // Increase the size of the apple by 25%
+        apple.mesh.scale.multiplyScalar(1.25);
+        
+        // Reduce velocity to make them fall slower
+        if (apple.velocity) {
+          apple.velocity.multiplyScalar(0.7);
+        }
+      }
+    });
+    
+    console.log("🍎 Apples now fall slower and are larger for easier grabbing!");
+    return true;
   }
 }
