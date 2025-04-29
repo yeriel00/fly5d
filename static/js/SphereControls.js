@@ -86,8 +86,8 @@ export default class SphereControls {
     this.isJumping = false;
     this.onGround = true;
     
-    // Double jump support
-    this.maxJumps = options.maxJumps || 2;
+    // MODIFIED: Set maxJumps to 2 for double jump mechanic
+    this.maxJumps = options.maxJumps || 2; // Initial jump + one mid-air jump
     this.jumpsRemaining = this.maxJumps;
     this.jumpCooldown = 0;
 
@@ -103,8 +103,8 @@ export default class SphereControls {
     this.gravityRampTime = 0.8;
     this.airTime = 0;
     
-    // Extreme position safety
-    this.maxHeightAboveGround = 45;
+    // REMOVED: Height safety limits
+    // this.maxHeightAboveGround = 45;
 
     // Add crouch options to the constructor
     this.options = Object.assign({
@@ -163,7 +163,7 @@ export default class SphereControls {
                 "jumpCooldown:", this.jumpCooldown.toFixed(3),
                 "onGround:", this.onGround);
       
-      // Simple jump condition - either on ground OR have air jumps remaining AND cooldown is done
+      // MODIFIED: Check jumpsRemaining to allow double jump but not unlimited jumps
       if (this.jumpEnabled && this.jumpsRemaining > 0 && this.jumpCooldown <= 0) {
         console.log("JUMP STARTING");
         
@@ -171,7 +171,7 @@ export default class SphereControls {
         const upDir = this.yawObject.position.clone().normalize();
         
         // Apply jump impulse along up vector (radial direction)
-        const jumpForce = this.jumpStrength * 5.5;
+        const jumpForce = this.jumpStrength * 7.5;
         const jumpVelocity = upDir.clone().multiplyScalar(jumpForce);
         
         // Save horizontal velocity before jump
@@ -186,24 +186,26 @@ export default class SphereControls {
         // Add jump force
         this.velocity.add(jumpVelocity);
         
-        // Update state
-        if (this.onGround) {
-          // First jump - just reset counter minus this jump
-          this.jumpsRemaining = this.maxJumps - 1;
-        } else {
-          // Air jump - decrement
-          this.jumpsRemaining--;
-        }
+        // MODIFIED: Actually decrement jumpsRemaining for proper double jump tracking
+        this.jumpsRemaining--;
         
         // Update jump state
         this.isJumping = true;
         this.onGround = false;
-        this.jumpCooldown = 0.15;
+        
+        // Very small cooldown to prevent accidental double-trigger
+        this.jumpCooldown = 0.08;
         
         // Reset air time for gravity calculation
         this.airTime = 0;
         
-        console.log(`Jump completed with force: ${jumpForce.toFixed(1)}, velocity: ${this.velocity.length().toFixed(1)}, jumps remaining: ${this.jumpsRemaining}`);
+        // Add visual feedback based on whether this is a double jump
+        const isDoubleJump = !this.onGround && this.jumpsRemaining === 0;
+        
+        console.log(`Jump completed with force: ${jumpForce.toFixed(1)}, 
+                    velocity: ${this.velocity.length().toFixed(1)}, 
+                    jumps remaining: ${this.jumpsRemaining}, 
+                    double jump: ${isDoubleJump}`);
       } else {
         console.log("Jump prevented - remaining jumps:", this.jumpsRemaining, "cooldown:", this.jumpCooldown.toFixed(3));
       }
@@ -270,22 +272,8 @@ export default class SphereControls {
       this.jumpsRemaining = this.maxJumps;
     }
     
-    // *** SAFETY CHECK: Prevent extreme heights ***
-    const distanceToGround = pos.length() - terrainRadius;
-    if (distanceToGround > this.maxHeightAboveGround) {
-      console.warn(`Height safety: ${distanceToGround.toFixed(1)} exceeds limit of ${this.maxHeightAboveGround}. Teleporting to safety.`);
-      // Teleport to safe position
-      const safeHeight = terrainRadius + this.playerHeightOffset + 2;
-      this.yawObject.position.copy(dir.multiplyScalar(safeHeight));
-      // Reset velocity and state
-      this.velocity.set(0, 0, 0);
-      this.onGround = true;
-      this.isJumping = false;
-      this.jumpsRemaining = this.maxJumps;
-      this.airTime = 0;
-      console.log("Player teleported to safety");
-      return; // Skip rest of update
-    }
+    // REMOVED: Height safety check and teleporting function
+    // No longer limiting maximum height above ground
 
     // Progressive gravity when not on ground
     if (!this.onGround) {
@@ -385,12 +373,8 @@ export default class SphereControls {
     // Apply velocity to position
     const velocityDelta = this.velocity.clone().multiplyScalar(dt);
     
-    // Safety limit for velocity - prevent extremely large position deltas
-    const maxDelta = 3.0;
-    if (velocityDelta.length() > maxDelta) {
-      console.warn(`Velocity delta too large (${velocityDelta.length().toFixed(1)}), capping to ${maxDelta}`);
-      velocityDelta.normalize().multiplyScalar(maxDelta);
-    }
+    // REMOVED: Velocity capping
+    // No longer limiting maximum velocity
     
     playerObj.position.add(velocityDelta);
     
@@ -486,12 +470,15 @@ export default class SphereControls {
     if (distanceToTerrain <= groundThreshold) {
       // We're at ground level
       if (!this.onGround) {
-        console.log("Ground contact detected - landing");
+        console.log("Ground contact detected - landing, resetting double jump");
         
         // Update state
         this.onGround = true;
         this.isJumping = false;
+        
+        // IMPORTANT: Reset jumpsRemaining when landing
         this.jumpsRemaining = this.maxJumps;
+        
         this.jumpCooldown = 0;
         this.airTime = 0;
         
@@ -589,6 +576,16 @@ export default class SphereControls {
         // Move player out of collision
         const correction = responseDir.clone().multiplyScalar(collisionRadius - surfaceDist + 0.05);
         this.yawObject.position.add(correction);
+        
+        // ADDED: Wall jump mechanic - hitting a collision can reset jump ability
+        // Check if this is a significant collision (not just grazing)
+        if (collisionRadius - surfaceDist > 0.2) {
+          // Reset double jump on significant wall collision for wall-jumping
+          if (!this.onGround && this.jumpsRemaining === 0) { 
+            this.jumpsRemaining = 1; // Allow one more jump after wall collision
+            console.log("Wall contact - granting wall jump ability");
+          }
+        }
         
         // Reduce horizontal velocity on collision
         const upDir = this.yawObject.position.clone().normalize();
