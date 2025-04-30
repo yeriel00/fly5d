@@ -19,14 +19,31 @@ import AppleSystem from './AppleSystem.js'; // Add this import
 import CrosshairSystem from './CrosshairSystem.js';
 import AppleGrowthManager from './apple-growth-manager.js';
 import { showDebugOverlay } from './debug-utils.js'; // Import debug overlay
+import { BirdSystem, createBirdSystem, hitBird } from './BirdSystem.js';
 
 // --- Constants ---
 const R = 400; // INCREASED radius from 300 to 400 for more spacious feel
+
+// Bird system configuration
+const BIRD_CONFIG = {
+  count: 5,                    // Number of birds to spawn
+  minHeight: 60,               // Minimum height above terrain
+  maxHeight: 100,              // Maximum height above terrain
+  minSpeed: 0.1,               // Minimum orbit speed (radians/sec)
+  maxSpeed: 0.3,               // Maximum orbit speed
+  damage: {
+    red: { body: 7, head: 3 }, // Damage thresholds for red apples
+    yellow: { body: 5, head: 2 }, // Damage thresholds for yellow apples
+    green: { body: 2, head: 1 }  // Damage thresholds for green apples
+  },
+  respawnTime: 15000           // Time in ms before respawning birds
+};
 
 // FIXED: Declare shared variables at the top level
 let player;
 let fxManager;
 let placeOnSphereFunc;
+let birdSystem; // New bird system reference
 const clock = new THREE.Clock(); // MOVED: Initialize clock at the top level
 
 // --- Terrain Height Function ---
@@ -461,8 +478,6 @@ const playerConfig = {
 // --- Initialize World & Player ---
 debug("Building world...");
 
-let waterEffect = null;
-
 // Create FPS monitor early in the script
 const fpsMonitor = new FPSMonitor({
   showDisplay: true,
@@ -599,6 +614,37 @@ initEnvironment(scene, 'medium', worldConfig, (placerFunc) => {
   window.appleGrowthMgr = appleGrowthMgr;  // expose for console
   appleGrowthMgr.init();
 
+  // Initialize the bird system with the planet radius
+  birdSystem = createBirdSystem(scene, {
+    radius: R, // Pass the planet radius
+    count: 15  // Spawn more birds than default
+  });
+  
+  // Expose the bird system globally for console debugging
+  window.birdSystem = birdSystem;
+
+  // Hook up bird collision detection to projectile system
+  if (player?.weaponSystem?.projectileSystem) {
+    const originalCheckCollision = player.weaponSystem.projectileSystem.checkCollision;
+    
+    // Override collision check to include birds
+    player.weaponSystem.projectileSystem.checkCollision = function(projectile) {
+      // First check bird collisions
+      const birdCollision = birdSystem.checkCollision(projectile);
+      if (birdCollision) {
+        // Create hit effect at collision point
+        if (fxManager) {
+          fxManager.createExplosion(birdCollision.position, 0.5, 
+            birdCollision.hitArea === 'head' ? 0xff0000 : 0xffaa00);
+        }
+        return true; // Collision happened, stop projectile
+      }
+      
+      // If no bird collision, proceed with original collision check
+      return originalCheckCollision.call(this, projectile);
+    };
+  }
+  
   // Start animation loop after player is created
   animate();
 });
@@ -666,6 +712,11 @@ function animate(timestamp) {
     // console.warn("Apple system not ready for update."); // Optional: uncomment for verbose logging
   }
   // *** END ADDED LOG ***
+
+  // Update bird system
+  if (birdSystem) {
+    birdSystem.update(delta);
+  }
 
   // Render scene with player camera
   if (player) {

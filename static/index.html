@@ -37,9 +37,18 @@
         <li>give30Apples() - Get 30 apples immediately</li>
         <li>toggleFPS() - Show performance stats</li>
         <li><strong>emergencyFixTreesAndApples()</strong> - Fix tree positions and create visible apples</li>
+        <li><strong>respawnBirds()</strong> - Respawn flying birds if they're gone</li>
       </ul>
       <button id="close-help">Got it!</button>
     </div>
+  </div>
+  
+  <div id="flying-tips" style="position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.5); color: white; padding: 10px; border-radius: 5px; display: none;">
+    <p>🎯 <strong>Birds are flying around!</strong></p>
+    <p>- Red apples: 7 body hits / 3 head hits</p>
+    <p>- Yellow apples: 5 body hits / 2 head hits</p>
+    <p>- Green apples: 2 body hits / 1 head hit</p>
+    <button id="hide-tips" style="background: #333; color: white; border: none; padding: 5px 10px; cursor: pointer;">Got it</button>
   </div>
   
   <div id="controls">
@@ -121,6 +130,31 @@
         if (window.player && window.player.addAmmo) {
           window.player.addAmmo('apple', 50); // Give 50 apples
           console.log("✅ Gave player 50 apple ammo");
+        }
+      }, 3500);
+
+      // Give player ammo early
+      setTimeout(() => {
+        if (window.player && window.player.addAmmo) {
+          window.player.addAmmo('red', 20);
+          window.player.addAmmo('yellow', 10);
+          window.player.addAmmo('green', 5);
+          console.log("✅ Gave player starting ammo");
+          
+          // Show flying bird tips
+          setTimeout(() => {
+            document.getElementById('flying-tips').style.display = 'block';
+            
+            // Hide tips when button clicked
+            document.getElementById('hide-tips').addEventListener('click', () => {
+              document.getElementById('flying-tips').style.display = 'none';
+            });
+            
+            // Auto-hide after 15 seconds
+            setTimeout(() => {
+              document.getElementById('flying-tips').style.display = 'none';
+            }, 15000);
+          }, 5000);
         }
       }, 3500);
     });
