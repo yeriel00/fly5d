@@ -5,7 +5,7 @@ export const DEER_CONFIG = {
   count: 8,                    // Number of deer in the scene
   minScale: 0.9,               // Minimum deer size
   maxScale: 1.3,               // Maximum deer size
-  moveSpeed: 0.5,              // Base movement speed
+  moveSpeed: 1.5,              // Increased movement speed (from 0.5)
   turnSpeed: 0.03,             // How fast deer can change direction
   colors: [                    // Deer color variants
     { body: 0x8B4513, leg: 0x654321, antler: 0x5A4D41 },  // Brown deer
@@ -14,9 +14,9 @@ export const DEER_CONFIG = {
     { body: 0xA1887F, leg: 0x8D6E63, antler: 0x795548 },  // Light brown deer
   ],
   damage: {
-    red: 3,                    // Damage threshold for red apples
-    yellow: 2,                 // Damage threshold for yellow apples
-    green: 1,                  // Damage threshold for green apples
+    red: { body: 7, head: 2 },    // 7 shots to body or 2 to head
+    yellow: { body: 5, head: 1 }, // 5 shots to body or 1 to head 
+    green: { body: 2, head: 1 },  // 2 shots to body or 1 to head
   },
   respawnTime: 15000,          // Time until a deer respawns after death
   appleDetectionRadius: 30,    // How far deer can detect apples
@@ -34,7 +34,10 @@ export class Deer {
     this.terrain = terrain;
     this.config = config;
     this.alive = true;
-    this.hits = { red: 0, yellow: 0, green: 0 };
+    this.hits = {
+      body: { red: 0, yellow: 0, green: 0 },
+      head: { red: 0, yellow: 0, green: 0 }
+    };
     this.isEating = false;
     this.targetApple = null;
     this.lastDirectionChange = 0;
@@ -262,9 +265,9 @@ export class Deer {
     const surfaceDistance = sphereRadius + terrainHeight + this.config.groundOffset;
     const targetPosition = surfaceDirection.multiplyScalar(surfaceDistance);
     
-    // Smoothly interpolate to the target height while keeping the same direction
-    // FIXED: More immediate height correction (from 0.5 to 0.9)
-    this.group.position.lerp(targetPosition, 0.9);
+    // FIXED: Less aggressive height correction to allow more horizontal movement
+    // Lower interpolation factor to prevent constantly snapping deer to ground
+    this.group.position.lerp(targetPosition, 0.3);
     
     // Orient deer to the surface
     this.alignToSurface();
@@ -336,8 +339,18 @@ export class Deer {
     const moveAmount = this.moveSpeed * deltaTime;
     const movement = projectedDirection.clone().multiplyScalar(moveAmount);
     
-    // Apply movement
-    this.group.position.add(movement);
+    // FIXED: Apply movement to position and ensure it's a significant amount
+    // Using a higher multiplier for more noticeable movement
+    const scaledMovement = movement.clone().multiplyScalar(5.0);
+    
+    // NEW: Check for collisions before applying movement
+    const newPosition = this.group.position.clone().add(scaledMovement);
+    if (!this._checkCollisions(newPosition)) {
+      this.group.position.copy(newPosition);
+    } else {
+      // If collision detected, try to move around the obstacle
+      this._avoidObstacle();
+    }
     
     // Keep deer on ground after movement
     this.stayOnGround();
@@ -415,7 +428,18 @@ export class Deer {
     // Move toward apple
     const moveAmount = this.moveSpeed * deltaTime;
     const movement = this.direction.clone().multiplyScalar(moveAmount);
-    this.group.position.add(movement);
+    
+    // FIXED: Apply a higher movement multiplier for apple seeking to make it more urgent
+    const scaledMovement = movement.clone().multiplyScalar(6.0);
+    
+    // NEW: Check for collisions before applying movement
+    const newPosition = this.group.position.clone().add(scaledMovement);
+    if (!this._checkCollisions(newPosition)) {
+      this.group.position.copy(newPosition);
+    } else {
+      // If blocked, try to navigate around obstacles
+      this._navigateAroundObstacle(this.targetApple.mesh.position);
+    }
     
     // Keep deer on ground
     this.stayOnGround();
@@ -517,21 +541,21 @@ export class Deer {
   }
   
   // ADDED: Make hit detection much more reliable
-  hit(appleType) {
+  hit(appleType, hitArea = 'body') {
     if (!this.alive) return false;
     
-    // Increment hit counter for the specific apple type
-    this.hits[appleType]++;
+    // Increment hit counter for the specific apple type and area
+    this.hits[hitArea][appleType]++;
     
     // Get damage threshold
-    const requiredHits = this.config.damage[appleType];
-    const currentHits = this.hits[appleType];
+    const requiredHits = this.config.damage[appleType][hitArea];
+    const currentHits = this.hits[hitArea][appleType];
     
     // Create hit effect
-    this.createHitEffect();
+    this.createHitEffect(hitArea);
     
     // ADDED: Always show hit feedback
-    console.log(`Deer hit with ${appleType} apple: ${currentHits}/${requiredHits}`);
+    console.log(`Deer hit on ${hitArea} with ${appleType} apple: ${currentHits}/${requiredHits}`);
     
     // Check if deer should die
     if (currentHits >= requiredHits) {
@@ -542,33 +566,35 @@ export class Deer {
     return false; // Deer survived this hit
   }
   
-  createHitEffect() {
+  createHitEffect(hitArea = 'body') {
     // Flash the body part
-    const originalColor = this.body.material.color.clone();
+    const mesh = hitArea === 'head' ? this.head : this.body;
+    const originalColor = mesh.material.color.clone();
     
     // Flash to white
-    this.body.material.color.set(0xffffff);
+    mesh.material.color.set(0xffffff);
     
-    // Create impact particles
-    this.createImpactParticles();
+    // Create impact particles from the hit area
+    this.createImpactParticles(
+      hitArea === 'head' ? this.head.position.clone() : this.body.position.clone()
+    );
     
     // Create hit marker
-    this.createHitMarker();
+    this.createHitMarker(
+      hitArea === 'head' ? this.head.position.clone() : this.body.position.clone()
+    );
     
     // Flash back to original after 100ms
     setTimeout(() => {
       if (this.alive) {
-        this.body.material.color.copy(originalColor);
+        mesh.material.color.copy(originalColor);
       }
     }, 100);
   }
   
-  createImpactParticles() {
+  createImpactParticles(position) {
     const particleCount = 8;
     const particles = new THREE.Group();
-    
-    // Get world position for center of deer
-    const worldPos = this.body.getWorldPosition(new THREE.Vector3());
     
     // Create small particles that fly out from impact
     for (let i = 0; i < particleCount; i++) {
@@ -577,7 +603,7 @@ export class Deer {
       const particle = new THREE.Mesh(particleGeo, particleMat);
       
       // Position at impact point
-      particle.position.copy(worldPos);
+      particle.position.copy(position);
       
       // Random velocity outward
       const velocity = new THREE.Vector3(
@@ -624,7 +650,7 @@ export class Deer {
     requestAnimationFrame(animateParticles);
   }
   
-  createHitMarker() {
+  createHitMarker(position) {
     // Create a hit marker to show where the hit occurred
     const markerSize = 1.2;
     const markerGroup = new THREE.Group();
@@ -823,7 +849,11 @@ export class Deer {
   respawn() {
     // Reset state
     this.alive = true;
-    this.hits = { red: 0, yellow: 0, green: 0 };
+    // FIX: Reset both head and body hit counters
+    this.hits = {
+      body: { red: 0, yellow: 0, green: 0 },
+      head: { red: 0, yellow: 0, green: 0 }
+    };
     this.currentState = 'wander';
     this.targetApple = null;
     
@@ -856,10 +886,133 @@ export class Deer {
     return 5.0 * Math.max(this.group.scale.x, this.group.scale.y, this.group.scale.z);
   }
   
+  getBodyPosition() {
+    return this.body.getWorldPosition(new THREE.Vector3());
+  }
+  
+  getHeadPosition() {
+    return this.head.getWorldPosition(new THREE.Vector3());
+  }
+  
+  getBodyRadius() {
+    return 5.0 * Math.max(this.group.scale.x, this.group.scale.y, this.group.scale.z);
+  }
+  
+  getHeadRadius() {
+    return 3.0 * Math.max(this.group.scale.x, this.group.scale.y, this.group.scale.z);
+  }
+  
   cleanup() {
     if (this.scene && this.group) {
       this.scene.remove(this.group);
     }
+  }
+  
+  // NEW: Check if the deer would collide with any world objects at the given position
+  _checkCollisions(position) {
+    // Skip if we don't have collidables
+    if (!this.config.collidables || this.config.collidables.length < 1) return false;
+    
+    const deerDir = position.clone().normalize();
+    const deerRadius = this.getCollisionRadius() * 0.8; // Slightly smaller radius for smoother movement
+    
+    // Check against all collidable objects (trees, rocks, etc.)
+    for (let i = 1; i < this.config.collidables.length; i++) {
+      const obj = this.config.collidables[i];
+      
+      // Skip invalid objects or planet itself
+      if (!obj.direction || !obj.position) continue;
+      
+      // Skip if the object has the noCollision flag
+      if (obj.noCollision) continue;
+      
+      // Calculate angular distance (great-circle distance on sphere)
+      const objDir = obj.direction;
+      const dot = deerDir.dot(objDir);
+      const angle = Math.acos(Math.min(Math.max(dot, -1), 1));
+      
+      // Convert to surface distance
+      const sphereRadius = 400; // Base planet radius
+      const surfaceDist = angle * sphereRadius;
+      
+      // Get combined collision radius
+      let collisionRadius = deerRadius + (obj.radius || 1.0);
+      
+      // Special handling for trees
+      if (obj.mesh?.userData?.isTree || obj.mesh?.userData?.isPineTree) {
+        // Use a smaller collision radius for trees to allow walking between them
+        collisionRadius = deerRadius + Math.min(2.0, obj.radius * 0.4);
+        
+        // Skip collision if height difference is too great (to allow walking under foliage)
+        const deerHeight = position.length() - sphereRadius;
+        const objHeight = obj.position.length() - sphereRadius;
+        const heightDiff = Math.abs(deerHeight - objHeight);
+        
+        if (heightDiff > 5) { // If deer and tree trunk base are at different heights
+          continue; // Skip collision
+        }
+      }
+      
+      // Check if collision occurs
+      if (surfaceDist < collisionRadius) {
+        return true; // Collision detected
+      }
+    }
+    
+    return false; // No collision
+  }
+  
+  // NEW: Change direction to avoid obstacles
+  _avoidObstacle() {
+    // Get the current up vector (perpendicular to ground)
+    const upVector = this.group.position.clone().normalize();
+    
+    // Generate a new random direction
+    const newDir = new THREE.Vector3(
+      Math.random() * 2 - 1,
+      Math.random() * 2 - 1,
+      Math.random() * 2 - 1
+    ).normalize();
+    
+    // Project onto the tangent plane to keep moving along the surface
+    newDir.sub(upVector.clone().multiplyScalar(newDir.dot(upVector))).normalize();
+    
+    // Set as the new direction with a randomized angle
+    this.direction = newDir;
+    this.lastDirectionChange = Date.now();
+  }
+  
+  // NEW: More intelligent navigation around obstacles when seeking apples
+  _navigateAroundObstacle(targetPosition) {
+    // Get the current up vector
+    const upVector = this.group.position.clone().normalize();
+    
+    // Calculate direction to target
+    const dirToTarget = targetPosition.clone().sub(this.group.position).normalize();
+    
+    // Generate a perpendicular direction to try to go around the obstacle
+    // Use cross product with up vector to get a direction perpendicular to both up and target direction
+    const perpDir = new THREE.Vector3().crossVectors(upVector, dirToTarget).normalize();
+    
+    // Randomly choose left or right to go around obstacle
+    if (Math.random() > 0.5) {
+      perpDir.negate();
+    }
+    
+    // Mix perpendicular direction with some of the original target direction
+    this.direction.copy(perpDir).multiplyScalar(0.8);
+    this.direction.add(dirToTarget.multiplyScalar(0.2));
+    this.direction.normalize();
+    
+    // Project onto tangent plane
+    this.direction.sub(upVector.clone().multiplyScalar(this.direction.dot(upVector))).normalize();
+    
+    // Apply a small impulse in the new direction to get unstuck
+    const moveImpulse = this.direction.clone().multiplyScalar(2.0);
+    this.group.position.add(moveImpulse);
+    
+    // Reset direction change timer
+    this.lastDirectionChange = Date.now();
   }
 }
 
@@ -927,30 +1080,49 @@ export class DeerSystem {
     for (const deer of this.deer) {
       if (!deer.alive) continue;
       
-      const deerPos = deer.getPosition();
-      // FIXED: Increased collision radius for more reliable hits
-      const deerRadius = deer.getCollisionRadius() * 1.5;
+      // Check head collision first (higher priority)
+      const headPos = deer.getHeadPosition();
+      const headRadius = deer.getHeadRadius() * 1.5;
       
-      // ADDED: Debug log for close projectiles
-      if (projectilePos.distanceTo(deerPos) < deerRadius + projectileRadius * 5) {
-        console.log(`Projectile close to deer! Distance: ${projectilePos.distanceTo(deerPos)}, threshold: ${deerRadius + projectileRadius}`);
-      }
-      
-      // Use line segment collision detection
       if (this.lineSegmentSphereIntersection(
-          projectilePrevPos, projectilePos, deerPos, deerRadius + projectileRadius)) {
-        // Hit!
-        const killed = deer.hit(projectileType);
+          projectilePrevPos, projectilePos, headPos, headRadius + projectileRadius)) {
+        // Head hit!
+        const killed = deer.hit(projectileType, 'head');
         
-        // ADDED: Ensure hit is reported
-        console.log("HIT DETECTED on deer!", killed ? "Deer killed!" : "Deer injured!");
+        console.log("HEAD HIT DETECTED on deer!", killed ? "Deer killed!" : "Deer injured!");
         
         return {
           hit: true,
           killed: killed,
-          position: deerPos,
+          position: headPos,
           deer: deer,
-          hitTerrain: false // Explicitly mark this as not a terrain hit
+          hitArea: 'head',
+          hitTerrain: false
+        };
+      }
+      
+      // Then check body collision
+      const bodyPos = deer.getBodyPosition();
+      const bodyRadius = deer.getBodyRadius() * 1.5;
+      
+      if (projectilePos.distanceTo(bodyPos) < bodyRadius + projectileRadius * 5) {
+        console.log(`Projectile close to deer! Distance: ${projectilePos.distanceTo(bodyPos)}`);
+      }
+      
+      if (this.lineSegmentSphereIntersection(
+          projectilePrevPos, projectilePos, bodyPos, bodyRadius + projectileRadius)) {
+        // Body hit!
+        const killed = deer.hit(projectileType, 'body');
+        
+        console.log("BODY HIT DETECTED on deer!", killed ? "Deer killed!" : "Deer injured!");
+        
+        return {
+          hit: true,
+          killed: killed,
+          position: bodyPos,
+          deer: deer,
+          hitArea: 'body',
+          hitTerrain: false
         };
       }
     }
@@ -1038,7 +1210,35 @@ export class DeerSystem {
 
 // Helper functions for external use
 export function createDeerSystem(scene, terrain, config) {
-  const deerSystem = new DeerSystem(scene, terrain, config);
+  // Create deer system with collidables for collision detection
+  const deerSystem = new DeerSystem(scene, terrain, {
+    ...config,
+    // Ensure we have collidables for collision detection
+    collidables: window.collidables || config?.collidables || []
+  });
+  
   deerSystem.init();
+  
+  // ADDED: Force deer to move significantly from their starting positions
+  // This gives them an initial push to spread out
+  deerSystem.deer.forEach(deer => {
+    // Generate a random direction for initial movement
+    const randomDir = new THREE.Vector3(
+      Math.random() * 2 - 1,
+      Math.random() * 2 - 1, 
+      Math.random() * 2 - 1
+    ).normalize();
+    
+    // Project onto tangent plane
+    const up = deer.group.position.clone().normalize();
+    randomDir.sub(up.clone().multiplyScalar(randomDir.dot(up))).normalize();
+    
+    // Set as deer's direction and force a significant movement
+    deer.direction = randomDir;
+    const initialMove = randomDir.clone().multiplyScalar(10.0); // Large initial movement
+    deer.group.position.add(initialMove);
+    deer.stayOnGround(); // Ensure they're on the terrain
+  });
+  
   return deerSystem;
 }
