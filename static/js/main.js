@@ -46,6 +46,7 @@ let player;
 let fxManager;
 let placeOnSphereFunc;
 let birdSystem; // New bird system reference
+let deerSystem; // Moved from lower in the file to top-level scope
 const clock = new THREE.Clock(); // MOVED: Initialize clock at the top level
 
 // --- Terrain Height Function ---
@@ -506,8 +507,8 @@ initEnvironment(scene, 'medium', worldConfig, (placerFunc) => {
 
   // Give player some initial ammo after creation
   if (player && player.addAmmo) {
-    player.addAmmo('apple', 10); // Start with 10 apples
-    console.log("Initial ammo provided: 10 apples");
+    player.addAmmo('red', 10); // Start with 10 red apples
+    console.log("Initial ammo provided: 10 red apples");
   }
 
   // CRITICAL FIX: Make sure we set collidables directly and consistently
@@ -647,6 +648,13 @@ initEnvironment(scene, 'medium', worldConfig, (placerFunc) => {
     };
   }
   
+  // Initialize the deer system right after player is created
+  // instead of using setTimeout later
+  deerSystem = initDeerSystem();
+  console.log("Deer system initialized");
+  console.log(`Created ${deerSystem.deer.length} deer`);
+  window.deerSystem = deerSystem;
+  
   // Start animation loop after player is created
   animate();
 });
@@ -666,14 +674,23 @@ onWindowResize();
 
 // Initialize deer system after terrain is created
 function initDeerSystem() {
-  // Fix: Replace undefined terrain reference with null, and use the terrain height function instead
+  // Create deer system with proper settings
   const deerSystem = createDeerSystem(scene, null, {
     count: 8,
-    wanderRadius: R * 0.3, // Fix: Use planet radius R instead of undefined terrainSize
-    // Add terrain height function to config
+    wanderRadius: R * 0.3,
     getTerrainHeight: getFullTerrainHeight,
-    groundOffset: 6, // Increased from 3 to 6 to ensure deer stay well above terrain variations
-    moveSpeed: 0.6   // Increased from default for better movement
+    groundOffset: 6,
+    moveSpeed: 1.5,  // Increased from 0.6 for better movement
+    appleDetectionRadius: 50, // Increased from 30 to detect apples from further away
+    appleEatTime: 2000, // Reduced from 3000 to make eating faster
+    // ADDED: Pass collidables for collision detection
+    collidables: collidables,
+    // Ensure damage settings match our requirements
+    damage: {
+      red: { body: 7, head: 2 },
+      yellow: { body: 5, head: 1 },
+      green: { body: 2, head: 1 }
+    }
   });
   
   // Create a collection of ground apples for tracking
@@ -681,25 +698,32 @@ function initDeerSystem() {
   
   // Track apples that fall to the ground
   const trackGroundApples = (apple) => {
-    if (apple && apple.mesh) {
-      const trackedApple = {
-        mesh: apple.mesh,
-        type: apple.type,
-        isEaten: false,
-        remove: () => {
-          // Function to handle apple removal when eaten
-          scene.remove(apple.mesh);
-          const index = groundApples.indexOf(trackedApple);
-          if (index !== -1) {
-            groundApples.splice(index, 1);
-          }
+    if (!apple || !apple.mesh) return;
+    
+    // Enhanced apple object for tracking
+    const trackedApple = {
+      mesh: apple.mesh,
+      type: apple.type || 'red', // Default to red if type is missing
+      isEaten: false,
+      remove: () => {
+        console.log(`Deer ate a ${trackedApple.type} apple!`);
+        scene.remove(apple.mesh);
+        const index = groundApples.indexOf(trackedApple);
+        if (index !== -1) {
+          groundApples.splice(index, 1);
         }
-      };
-      
-      // Add to tracking arrays
-      groundApples.push(trackedApple);
-      deerSystem.trackApple(trackedApple);
-    }
+        // Also remove from deer's tracked apples
+        const deerAppleIndex = deerSystem.apples.indexOf(trackedApple);
+        if (deerAppleIndex !== -1) {
+          deerSystem.apples.splice(deerAppleIndex, 1);
+        }
+      }
+    };
+    
+    // Add to tracking arrays
+    groundApples.push(trackedApple);
+    deerSystem.trackApple(trackedApple);
+    console.log(`Apple added for deer to find: ${trackedApple.type}`);
   };
   
   // Add deer collision check to the projectile system
@@ -727,9 +751,10 @@ function initDeerSystem() {
       if (deerResult && deerResult.hit) {
         // Create hit effect at collision point if FX manager exists
         if (fxManager) {
-          fxManager.createExplosion(deerResult.position, 0.5, 0xff0000);
+          fxManager.createExplosion(deerResult.position, 0.5, 
+            deerResult.hitArea === 'head' ? 0xff0000 : 0xda4400);
         }
-        console.log("DEER HIT CONFIRMED!");
+        console.log(`DEER ${deerResult.hitArea.toUpperCase()} HIT CONFIRMED!`);
         return deerResult;
       }
       
@@ -738,19 +763,13 @@ function initDeerSystem() {
       
       // 4. If projectile hits ground, track it for deer to find
       if (result && result.hit && result.hitTerrain) {
-        trackGroundApples(projectile);
+        // Add small delay before tracking to ensure apple has settled
+        setTimeout(() => trackGroundApples(projectile), 200);
       }
       
       return result;
     };
-  } else {
-    console.error("Player weapon system not available for deer collision setup!");
   }
-  
-  // ADDED: Debug command to show deer positions in scene
-  window.debugDeer = function() {
-    return deerSystem.showDeerInfo();
-  };
   
   // ...existing code...
   
@@ -758,17 +777,6 @@ function initDeerSystem() {
 }
 
 // FIXED: Increase delay to ensure world is fully loaded before spawning deer
-let deerSystem;
-setTimeout(() => {
-  deerSystem = initDeerSystem();
-  console.log("Deer system initialized");
-  
-  // ADDED: Log deer count for verification
-  console.log(`Created ${deerSystem.deer.length} deer`);
-  
-  // ADDED: Make deer system globally accessible for debugging
-  window.deerSystem = deerSystem;
-}, 2000); // increased from 1000 to 2000
 
 // --- Animation Loop ---
 function animate(timestamp) {
@@ -824,6 +832,11 @@ function animate(timestamp) {
   // Update bird system
   if (birdSystem) {
     birdSystem.update(delta);
+  }
+
+  // Make sure deer system gets updated
+  if (deerSystem) {
+    deerSystem.update(delta);
   }
 
   // Render scene with player camera
@@ -1577,9 +1590,10 @@ function initializePlayerUI() {
   // Give player initial ammo at startup
   setTimeout(() => {
     if (player) {
-      player.addAmmo('apple', 20);
-      player.addAmmo('goldenApple', 5);
-      console.log("Initial ammo loaded: 20 apples, 5 golden apples");
+      player.addAmmo('red', 20); // Changed from 'apple' to 'red'
+      player.addAmmo('yellow', 5); // Changed from 'goldenApple' to 'yellow'
+      player.addAmmo('green', 2); // Add some green apples too
+      console.log("Initial ammo loaded: 20 red, 5 yellow, 2 green apples");
     }
   }, 1000);
   
