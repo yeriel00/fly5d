@@ -363,12 +363,107 @@ export class Bird {
     // Create impact particles
     this.createImpactParticles(hitArea === 'head' ? this.head.position : this.body.position);
     
+    // Create hit marker
+    this.createHitMarker(hitArea === 'head' ? this.head.position : this.body.position);
+    
     // Flash back to original after 100ms
     setTimeout(() => {
       if (this.alive) {
         mesh.material.color.copy(originalColor);
       }
     }, 100);
+  }
+  
+  createHitMarker(position) {
+    // Create a hit marker to show where the hit occurred
+    const markerSize = 1.0;
+    const markerGroup = new THREE.Group();
+    
+    // Create a "X" shape for the hit marker
+    const createLine = (start, end, color) => {
+      const points = [start, end];
+      const geometry = new THREE.BufferGeometry().setFromPoints(points);
+      const material = new THREE.LineBasicMaterial({ 
+        color: color,
+        linewidth: 3,
+        transparent: true,
+        opacity: 1.0
+      });
+      return new THREE.Line(geometry, material);
+    };
+    
+    // Create an X shape
+    const line1 = createLine(
+      new THREE.Vector3(-markerSize, -markerSize, 0),
+      new THREE.Vector3(markerSize, markerSize, 0),
+      0xff0000
+    );
+    
+    const line2 = createLine(
+      new THREE.Vector3(-markerSize, markerSize, 0),
+      new THREE.Vector3(markerSize, -markerSize, 0),
+      0xff0000
+    );
+    
+    // Create a circle
+    const circleGeometry = new THREE.RingGeometry(markerSize * 0.8, markerSize, 16);
+    const circleMaterial = new THREE.LineBasicMaterial({ 
+      color: 0xffff00,
+      transparent: true,
+      opacity: 1.0
+    });
+    const circle = new THREE.LineLoop(circleGeometry, circleMaterial);
+    
+    // Add to marker group
+    markerGroup.add(line1);
+    markerGroup.add(line2);
+    markerGroup.add(circle);
+    
+    // Convert local position to world position
+    const worldPos = new THREE.Vector3();
+    if (position) {
+      worldPos.copy(position).applyMatrix4(this.group.matrixWorld);
+    } else {
+      worldPos.copy(this.group.position);
+    }
+    
+    // Position the marker
+    markerGroup.position.copy(worldPos);
+    
+    // Make marker always face camera
+    if (this.scene.camera) {
+      markerGroup.lookAt(this.scene.camera.position);
+    }
+    
+    // Add to scene
+    this.scene.add(markerGroup);
+    
+    // Animate marker
+    const startTime = Date.now();
+    const duration = 1000; // 1 second
+    
+    const animateMarker = () => {
+      const elapsed = Date.now() - startTime;
+      const progress = elapsed / duration;
+      
+      if (progress < 1.0) {
+        // Scale up marker
+        const scale = 1.0 + progress;
+        markerGroup.scale.set(scale, scale, scale);
+        
+        // Fade out marker
+        markerGroup.children.forEach(child => {
+          child.material.opacity = 1.0 - progress;
+        });
+        
+        requestAnimationFrame(animateMarker);
+      } else {
+        // Remove marker when animation is complete
+        this.scene.remove(markerGroup);
+      }
+    };
+    
+    requestAnimationFrame(animateMarker);
   }
   
   createImpactParticles(position) {
@@ -683,10 +778,28 @@ export class BirdSystem {
   checkCollision(projectile) {
     if (!projectile || !projectile.mesh || !projectile.velocity) return false;
     
-    // Get projectile position
+    // Get projectile position and previous position (based on velocity)
     const projectilePos = projectile.mesh.position.clone();
-    const projectileRadius = projectile.radius || 1.0;
+    
+    // Calculate previous position based on velocity - use a longer trail for faster projectiles
+    // This helps catch fast-moving projectiles that might skip through targets
+    const velocityLength = projectile.velocity.length();
+    // FIXED: Use an even longer trail for more reliable collision detection
+    const trailFactor = Math.max(3.0, Math.min(15.0, velocityLength * 20));
+    const velocityNormalized = projectile.velocity.clone().normalize();
+    const projectilePrevPos = projectilePos.clone().sub(
+      velocityNormalized.multiplyScalar(trailFactor)
+    );
+    
+    // FIXED: Use a larger collision radius for more reliable hit detection
+    const projectileRadius = (projectile.radius || 1.0) * 3.5; // Increased from 1.5
     const projectileType = projectile.type || 'red';
+    
+    // FIXED: Use bigger collision radii for birds
+    const collisionRadiusMultiplier = 3.0; // Increased from 2.0
+    
+    // ADDED: Debug info for collision attempts
+    console.log(`Checking collision with ${this.birds.length} birds`);
     
     // Check collision with each bird
     for (const bird of this.birds) {
@@ -694,12 +807,13 @@ export class BirdSystem {
       
       // Check head collision (higher priority)
       const headPos = bird.getHeadPosition();
-      const headRadius = bird.getHeadRadius();
-      const headDist = headPos.distanceTo(projectilePos);
+      const headRadius = bird.getHeadRadius() * collisionRadiusMultiplier;
       
-      if (headDist < headRadius + projectileRadius) {
+      // Use line segment collision for more accurate detection
+      if (this.lineSegmentSphereIntersection(projectilePrevPos, projectilePos, headPos, headRadius + projectileRadius)) {
         // Head hit!
         const killed = bird.hit(projectileType, 'head');
+        console.log("BIRD HEAD HIT!");
         return {
           hit: true,
           killed: killed,
@@ -711,12 +825,13 @@ export class BirdSystem {
       
       // Check body collision
       const bodyPos = bird.getBodyPosition();
-      const bodyRadius = bird.getBodyRadius();
-      const bodyDist = bodyPos.distanceTo(projectilePos);
+      const bodyRadius = bird.getBodyRadius() * collisionRadiusMultiplier;
       
-      if (bodyDist < bodyRadius + projectileRadius) {
+      // Use line segment collision for more accurate detection
+      if (this.lineSegmentSphereIntersection(projectilePrevPos, projectilePos, bodyPos, bodyRadius + projectileRadius)) {
         // Body hit!
         const killed = bird.hit(projectileType, 'body');
+        console.log("BIRD BODY HIT!");
         return {
           hit: true,
           killed: killed,
@@ -728,6 +843,48 @@ export class BirdSystem {
     }
     
     return false;
+  }
+  
+  // Helper method to detect intersection between a line segment and a sphere
+  lineSegmentSphereIntersection(lineStart, lineEnd, sphereCenter, sphereRadius) {
+    // Vector from start point to sphere center
+    const lineToSphere = new THREE.Vector3().subVectors(sphereCenter, lineStart);
+    
+    // Direction of line segment
+    const lineDirection = new THREE.Vector3().subVectors(lineEnd, lineStart);
+    const lineLength = lineDirection.length();
+    
+    // Avoid division by zero for very short line segments
+    if (lineLength < 0.0001) {
+      return lineStart.distanceTo(sphereCenter) <= sphereRadius;
+    }
+    
+    lineDirection.normalize();
+    
+    // Project line-to-sphere vector onto line direction
+    const projection = lineToSphere.dot(lineDirection);
+    
+    // Find closest point on line segment to sphere center
+    let closestPoint;
+    
+    // If projection is negative, closest point is line start
+    if (projection < 0) {
+      closestPoint = lineStart;
+    } 
+    // If projection is greater than line length, closest point is line end
+    else if (projection > lineLength) {
+      closestPoint = lineEnd;
+    } 
+    // Otherwise, closest point is along the line
+    else {
+      closestPoint = lineStart.clone().add(lineDirection.clone().multiplyScalar(projection));
+    }
+    
+    // Distance from closest point to sphere center
+    const distance = closestPoint.distanceTo(sphereCenter);
+    
+    // If distance is less than sphere radius, there's a collision
+    return distance <= sphereRadius;
   }
   
   respawnAll() {

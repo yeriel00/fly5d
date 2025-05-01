@@ -20,6 +20,8 @@ import CrosshairSystem from './CrosshairSystem.js';
 import AppleGrowthManager from './apple-growth-manager.js';
 import { showDebugOverlay } from './debug-utils.js'; // Import debug overlay
 import { BirdSystem, createBirdSystem, hitBird } from './BirdSystem.js';
+// Import the deer system
+import { createDeerSystem } from './DeerSystem.js';
 
 // --- Constants ---
 const R = 400; // INCREASED radius from 300 to 400 for more spacious feel
@@ -661,6 +663,112 @@ initEnvironment(scene, 'medium', worldConfig, (placerFunc) => {
 
 // Trigger initial resize
 onWindowResize();
+
+// Initialize deer system after terrain is created
+function initDeerSystem() {
+  // Fix: Replace undefined terrain reference with null, and use the terrain height function instead
+  const deerSystem = createDeerSystem(scene, null, {
+    count: 8,
+    wanderRadius: R * 0.3, // Fix: Use planet radius R instead of undefined terrainSize
+    // Add terrain height function to config
+    getTerrainHeight: getFullTerrainHeight,
+    groundOffset: 6, // Increased from 3 to 6 to ensure deer stay well above terrain variations
+    moveSpeed: 0.6   // Increased from default for better movement
+  });
+  
+  // Create a collection of ground apples for tracking
+  const groundApples = [];
+  
+  // Track apples that fall to the ground
+  const trackGroundApples = (apple) => {
+    if (apple && apple.mesh) {
+      const trackedApple = {
+        mesh: apple.mesh,
+        type: apple.type,
+        isEaten: false,
+        remove: () => {
+          // Function to handle apple removal when eaten
+          scene.remove(apple.mesh);
+          const index = groundApples.indexOf(trackedApple);
+          if (index !== -1) {
+            groundApples.splice(index, 1);
+          }
+        }
+      };
+      
+      // Add to tracking arrays
+      groundApples.push(trackedApple);
+      deerSystem.trackApple(trackedApple);
+    }
+  };
+  
+  // Add deer collision check to the projectile system
+  if (player?.weaponSystem?.projectileSystem) {
+    const originalCheckCollision = player.weaponSystem.projectileSystem.checkCollision;
+    
+    // Override collision check to include birds AND deer
+    player.weaponSystem.projectileSystem.checkCollision = function(projectile) {
+      // FIXED: Check bird AND deer collisions first for better priority
+      
+      // 1. Check bird collisions
+      const birdCollision = birdSystem.checkCollision(projectile);
+      if (birdCollision && birdCollision.hit) {
+        // Create hit effect at collision point
+        if (fxManager) {
+          fxManager.createExplosion(birdCollision.position, 0.5, 
+            birdCollision.hitArea === 'head' ? 0xff0000 : 0xffaa00);
+        }
+        console.log("BIRD HIT CONFIRMED!");
+        return { hit: true }; // Collision happened, stop projectile
+      }
+      
+      // 2. Check deer collisions
+      const deerResult = deerSystem.checkCollision(projectile);
+      if (deerResult && deerResult.hit) {
+        // Create hit effect at collision point if FX manager exists
+        if (fxManager) {
+          fxManager.createExplosion(deerResult.position, 0.5, 0xff0000);
+        }
+        console.log("DEER HIT CONFIRMED!");
+        return deerResult;
+      }
+      
+      // 3. If no special entity collision, check terrain
+      const result = originalCheckCollision.call(this, projectile);
+      
+      // 4. If projectile hits ground, track it for deer to find
+      if (result && result.hit && result.hitTerrain) {
+        trackGroundApples(projectile);
+      }
+      
+      return result;
+    };
+  } else {
+    console.error("Player weapon system not available for deer collision setup!");
+  }
+  
+  // ADDED: Debug command to show deer positions in scene
+  window.debugDeer = function() {
+    return deerSystem.showDeerInfo();
+  };
+  
+  // ...existing code...
+  
+  return deerSystem;
+}
+
+// FIXED: Increase delay to ensure world is fully loaded before spawning deer
+let deerSystem;
+setTimeout(() => {
+  deerSystem = initDeerSystem();
+  console.log("Deer system initialized");
+  
+  // ADDED: Log deer count for verification
+  console.log(`Created ${deerSystem.deer.length} deer`);
+  
+  // ADDED: Make deer system globally accessible for debugging
+  window.deerSystem = deerSystem;
+}, 2000); // increased from 1000 to 2000
 
 // --- Animation Loop ---
 function animate(timestamp) {
@@ -1900,7 +2008,7 @@ function initializePlayerUI() {
   
   // Add command to adjust projectile radius
   window.adjustProjectileRadius = (multiplier = 1.0) => {
-    if (!player?.weaponSystem?.projectileSystem) return "Projectile system not available";
+    if (!player?.weaponSystem?.projectileSystem) return "Weapon system not available";
     
     const oldRadius = player.weaponSystem.projectileSystem.options.projectileRadius;
     player.weaponSystem.projectileSystem.options.projectileRadius = oldRadius * multiplier;
