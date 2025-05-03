@@ -22,6 +22,9 @@ export default class FXManager {
     
     // Setup sky and lighting
     this.setupSky();
+
+    // Add atmospheric fog
+    this.setupAtmosphericFog();
   }
   
   setupRenderer() {
@@ -64,6 +67,62 @@ export default class FXManager {
     // Create stars for night sky
     this.createStars();
   }
+
+  /**
+   * Setup atmospheric fog for the scene
+   * @private
+   */
+  setupAtmosphericFog() {
+    // Enhanced atmospheric fog with a light blue tint
+    const fogColor = new THREE.Color(0xb8d0ff);
+    const fogDensity = 0.00018; // Slightly increased for more visible atmosphere
+    
+    // Use exponential fog for more realistic atmosphere effect
+    this.fog = new THREE.FogExp2(fogColor, fogDensity);
+    this.scene.fog = this.fog;
+    
+    // Store initial values for day/night cycle adjustments
+    this.initialFogParams = {
+      color: fogColor.clone(),
+      density: fogDensity
+    };
+    
+    // Add a slight blue tint to the scene background to match fog
+    // This creates a more cohesive atmospheric look
+    const backgroundTint = fogColor.clone().lerp(new THREE.Color(0x87CEEB), 0.5);
+    this.scene.background = backgroundTint;
+    
+    console.log('Atmospheric fog initialized with enhanced settings');
+  }
+  
+  /**
+   * Update fog parameters based on time of day
+   * @param {number} sunIntensity - Intensity of sunlight (0-1)
+   * @private
+   */
+  updateFogParams(sunIntensity) {
+    if (!this.fog) return;
+    
+    // Adjust fog color based on time of day
+    // Daytime: light blue, nighttime: darker blue with a hint of purple
+    const dayFogColor = this.initialFogParams.color.clone();
+    const nightFogColor = new THREE.Color(0x202040); // Dark blue-purple for night
+    
+    // Interpolate between day and night colors
+    this.fog.color.copy(dayFogColor).lerp(nightFogColor, 1 - sunIntensity);
+    
+    // Increase fog density at night for a more mystical atmosphere
+    const baseDensity = this.initialFogParams.density;
+    this.fog.density = baseDensity * (1 + (1 - sunIntensity) * 0.5);
+    
+    // Also update scene background color to match the atmospheric mood
+    if (this.scene.background) {
+      const dayBackground = new THREE.Color(0x87CEEB); // Sky blue for day
+      const nightBackground = new THREE.Color(0x101025); // Dark blue for night
+      
+      this.scene.background.copy(dayBackground).lerp(nightBackground, 1 - sunIntensity);
+    }
+  }
   
   createStars() {
     const starGeometry = new THREE.BufferGeometry();
@@ -93,6 +152,28 @@ export default class FXManager {
     const stars = new THREE.Points(starGeometry, starMaterial);
     this.scene.add(stars);
     this.stars = stars;
+  }
+  
+  createParticleTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    
+    const context = canvas.getContext('2d');
+    const gradient = context.createRadialGradient(
+      32, 32, 0, 32, 32, 32
+    );
+    
+    gradient.addColorStop(0, 'rgba(255,255,255,1)');
+    gradient.addColorStop(0.3, 'rgba(200,200,255,0.8)');
+    gradient.addColorStop(0.7, 'rgba(120,120,255,0.4)');
+    gradient.addColorStop(1, 'rgba(0,0,64,0)');
+    
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, 64, 64);
+    
+    const texture = new THREE.CanvasTexture(canvas);
+    return texture;
   }
   
   createWaterfall(position, normal, width=2, height=8, count=500) {
@@ -166,28 +247,6 @@ export default class FXManager {
     };
     
     return id;
-  }
-  
-  createParticleTexture() {
-    const canvas = document.createElement('canvas');
-    canvas.width = 64;
-    canvas.height = 64;
-    
-    const context = canvas.getContext('2d');
-    const gradient = context.createRadialGradient(
-      32, 32, 0, 32, 32, 32
-    );
-    
-    gradient.addColorStop(0, 'rgba(255,255,255,1)');
-    gradient.addColorStop(0.3, 'rgba(200,200,255,0.8)');
-    gradient.addColorStop(0.7, 'rgba(120,120,255,0.4)');
-    gradient.addColorStop(1, 'rgba(0,0,64,0)');
-    
-    context.fillStyle = gradient;
-    context.fillRect(0, 0, 64, 64);
-    
-    const texture = new THREE.CanvasTexture(canvas);
-    return texture;
   }
   
   createFireflies(position, radius=10, count=50) {
@@ -264,6 +323,9 @@ export default class FXManager {
     this.lights.hemiLight.color.copy(skyColor);
     this.lights.hemiLight.groundColor.copy(groundColor);
     this.lights.hemiLight.intensity = 0.3 + 0.4 * sunIntensity;
+    
+    // Update fog parameters
+    this.updateFogParams(sunIntensity);
     
     // Show/hide stars based on time of day
     if (this.stars) {
@@ -346,6 +408,50 @@ export default class FXManager {
     
     // Update the buffer
     fireflies.object.geometry.attributes.position.needsUpdate = true;
+  }
+
+  /**
+   * Set fog density
+   * @param {number} density - New fog density (0-0.001 is a good range)
+   */
+  setFogDensity(density) {
+    if (!this.fog) return;
+    
+    // Store as initial parameter for day/night cycle
+    this.initialFogParams.density = density;
+    this.fog.density = density;
+    
+    console.log(`Atmospheric fog density updated to: ${density}`);
+  }
+
+  /**
+   * Set fog color
+   * @param {THREE.Color|number} color - New fog color
+   */
+  setFogColor(color) {
+    if (!this.fog) return;
+    
+    const newColor = color instanceof THREE.Color ? color : new THREE.Color(color);
+    this.fog.color.copy(newColor);
+    this.initialFogParams.color.copy(newColor);
+    
+    console.log(`Atmospheric fog color updated to:`, newColor);
+  }
+
+  /**
+   * Toggle atmospheric fog on/off
+   * @param {boolean} enabled - Whether fog should be enabled
+   */
+  toggleFog(enabled) {
+    if (enabled) {
+      // Re-enable fog if it was disabled
+      this.scene.fog = this.fog;
+      console.log('Atmospheric fog enabled');
+    } else {
+      // Disable fog by removing it from the scene
+      this.scene.fog = null;
+      console.log('Atmospheric fog disabled');
+    }
   }
   
   update() {
