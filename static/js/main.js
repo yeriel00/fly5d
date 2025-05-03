@@ -19,9 +19,9 @@ import AppleSystem from './AppleSystem.js'; // Add this import
 import CrosshairSystem from './CrosshairSystem.js';
 import AppleGrowthManager from './apple-growth-manager.js';
 import { showDebugOverlay } from './debug-utils.js'; // Import debug overlay
-import { BirdSystem, createBirdSystem, hitBird } from './BirdSystem.js';
-// Import the deer system
-import { createDeerSystem } from './DeerSystem.js';
+import { BirdSystem } from './BirdSystem.js';
+import { DeerSystem } from './DeerSystem.js'; // Import DeerSystem
+import CloudSystem from './CloudSystem.js'; // Import our new CloudSystem
 
 // --- Constants ---
 const R = 400; // INCREASED radius from 300 to 400 for more spacious feel
@@ -47,6 +47,7 @@ let fxManager;
 let placeOnSphereFunc;
 let birdSystem; // New bird system reference
 let deerSystem; // Moved from lower in the file to top-level scope
+let cloudSystem; // Add cloud system reference
 const clock = new THREE.Clock(); // MOVED: Initialize clock at the top level
 
 // --- Terrain Height Function ---
@@ -55,6 +56,64 @@ const clock = new THREE.Clock(); // MOVED: Initialize clock at the top level
 // Add a debug function to main.js
 function debug(info) {
   console.log(`[MAIN] ${info}`);
+}
+
+// Function to create and initialize a bird system
+function createBirdSystem(scene, options = {}) {
+  const config = {
+    // Default values
+    radius: R,
+    count: BIRD_CONFIG.count,
+    getTerrainHeight: getFullTerrainHeight,
+    minHeight: BIRD_CONFIG.minHeight,
+    maxHeight: BIRD_CONFIG.maxHeight,
+    minSpeed: BIRD_CONFIG.minSpeed,
+    maxSpeed: BIRD_CONFIG.maxSpeed,
+    damage: BIRD_CONFIG.damage,
+    respawnTime: BIRD_CONFIG.respawnTime,
+    // Override with provided options
+    ...options
+  };
+
+  // Create new bird system
+  const birds = new BirdSystem(scene, config);
+  
+  // Initialize birds at random positions
+  birds.init();
+  
+  debug(`Created bird system with ${config.count} birds`);
+  return birds;
+}
+
+// Function to create and initialize a deer system
+function createDeerSystem(scene, player = null, options = {}) {
+  const config = {
+    // Default values
+    radius: R,
+    count: 5,
+    wanderRadius: R * 0.3,
+    getTerrainHeight: getFullTerrainHeight,
+    groundOffset: 5,
+    moveSpeed: 1.2,
+    appleDetectionRadius: 40,
+    appleEatTime: 3000,
+    damage: {
+      red: { body: 5, head: 2 },
+      yellow: { body: 3, head: 1 },
+      green: { body: 1, head: 1 }
+    },
+    // Override with provided options
+    ...options
+  };
+
+  // Create new deer system
+  const deer = new DeerSystem(scene, config);
+  
+  // Initialize deer at random positions
+  deer.init();
+  
+  debug(`Created deer system with ${config.count} deer`);
+  return deer;
 }
 
 // --- Setup WebGL Renderer & Scene ---
@@ -475,7 +534,9 @@ const playerConfig = {
   sphereRadius: R,
   // *** USE THE FULL TERRAIN HEIGHT FUNCTION ***
   getTerrainHeight: getFullTerrainHeight,
-  collidables: collidables
+  collidables: collidables,
+  // Increase far clipping plane to see distant clouds
+  cameraFarPlane: 10000, // Add this parameter to see clouds from far away
 };
 
 // --- Initialize World & Player ---
@@ -655,8 +716,32 @@ initEnvironment(scene, 'medium', worldConfig, (placerFunc) => {
   console.log(`Created ${deerSystem.deer.length} deer`);
   window.deerSystem = deerSystem;
   
+  // Initialize Cloud System with distant preset parameters as default
+  cloudSystem = new CloudSystem(scene, {
+    count: 100,               // Good number of clouds for visibility 
+    minRadius: 2000,          // Far from the planet (distant preset)
+    maxRadius: 3000,          // Upper atmosphere limit (distant preset)
+    minScale: 80,             // Larger clouds to be visible from distance
+    maxScale: 150,            // Large max size for variety
+    rotationSpeed: 0.0003,    // Increased for more noticeable movement
+    opacity: 0.9,             // Higher opacity to be visible
+    distribution: 0.4,        // Better distribution around the planet
+    fogDensity: 0.000008      // Light fog for cosmic distances
+  });
+
+  // Add cloud system to global for console access
+  window.cloudSystem = cloudSystem;
+
   // Start animation loop after player is created
   animate();
+  
+  // Ensure camera far plane is adjusted to see distant clouds
+  // Add this right after player creation
+  if (player && player.camera) {
+    player.camera.far = playerConfig.cameraFarPlane || 10000;
+    player.camera.updateProjectionMatrix();
+    console.log(`Camera far plane set to: ${player.camera.far}`);
+  }
 });
 
 // Remove particle setup - commenting out
@@ -837,6 +922,11 @@ function animate(timestamp) {
   // Make sure deer system gets updated
   if (deerSystem) {
     deerSystem.update(delta);
+  }
+
+  // Update the cloud system
+  if (cloudSystem) {
+    cloudSystem.update(delta);
   }
 
   // Render scene with player camera
@@ -2349,6 +2439,221 @@ function initializePlayerUI() {
   };
 
 }
+
+// Call at startup
+setupDebugCommands();
+
+// Add cloud control options to easily adjust the cloud system
+function setupCloudControls() {
+  // Create a cloudOptions object with controls for cloud appearance
+  window.cloudOptions = {
+    // Basic adjustment functions
+    setHeight(height) {
+      if (!cloudSystem) return "Cloud system not available";
+      
+      // Store original values if not already stored
+      if (!cloudSystem._originalMinRadius) {
+        cloudSystem._originalMinRadius = cloudSystem.options.minRadius;
+        cloudSystem._originalMaxRadius = cloudSystem.options.maxRadius;
+      }
+      
+      cloudSystem.options.minRadius = height;
+      cloudSystem.options.maxRadius = height * 1.25; // Keep proportional max radius
+      cloudSystem.init();
+      
+      console.log(`Cloud height set to ${height} (min radius)`);
+      return { minRadius: cloudSystem.options.minRadius, maxRadius: cloudSystem.options.maxRadius };
+    },
+    
+    setScale(scale) {
+      if (!cloudSystem) return "Cloud system not available";
+      
+      // Store original values if not already stored
+      if (!cloudSystem._originalMinScale) {
+        cloudSystem._originalMinScale = cloudSystem.options.minScale;
+        cloudSystem._originalMaxScale = cloudSystem.options.maxScale;
+      }
+      
+      cloudSystem.options.minScale = scale;
+      cloudSystem.options.maxScale = scale * 2; // Keep proportional max scale
+      cloudSystem.init();
+      
+      console.log(`Cloud scale set to ${scale} (min scale)`);
+      return { minScale: cloudSystem.options.minScale, maxScale: cloudSystem.options.maxScale };
+    },
+    
+    setCount(count) {
+      if (!cloudSystem) return "Cloud system not available";
+      cloudSystem.options.count = count;
+      cloudSystem.init();
+      
+      console.log(`Cloud count set to ${count}`);
+      return count;
+    },
+    
+    setOpacity(opacity) {
+      if (!cloudSystem) return "Cloud system not available";
+      cloudSystem.options.opacity = Math.max(0, Math.min(1, opacity)); // Clamp between 0-1
+      cloudSystem.init();
+      
+      console.log(`Cloud opacity set to ${opacity}`);
+      return opacity;
+    },
+    
+    setSpeed(speed) {
+      if (!cloudSystem) return "Cloud system not available";
+      cloudSystem.options.rotationSpeed = speed;
+      cloudSystem.init();
+      
+      console.log(`Cloud rotation speed set to ${speed}`);
+      return speed;
+    },
+    
+    // Cloud visibility functions
+    showClouds() {
+      if (!cloudSystem) return "Cloud system not available";
+      
+      // Apply the distant preset which is now our default
+      this.presets.distant();
+      
+      console.log(`☁️ Clouds configured for good visibility`);
+      return "Clouds should now be clearly visible";
+    },
+    
+    hideClouds() {
+      if (!cloudSystem) return "Cloud system not available";
+      cloudSystem.options.opacity = 0;
+      cloudSystem.init();
+      
+      console.log(`Clouds hidden (opacity set to 0)`);
+      return "Clouds hidden";
+    },
+    
+    // Cloud style presets
+    presets: {
+      close() {
+        if (!cloudSystem) return "Cloud system not available";
+        cloudSystem.options.minRadius = 600; // Very close to the planet
+        cloudSystem.options.maxRadius = 750;
+        cloudSystem.options.minScale = 30;
+        cloudSystem.options.maxScale = 60;
+        cloudSystem.options.opacity = 0.9;
+        cloudSystem.init();
+        
+        console.log("Applied 'close clouds' preset");
+        return "Clouds are now close to the planet";
+      },
+      
+      distant() {
+        if (!cloudSystem) return "Cloud system not available";
+        cloudSystem.options.minRadius = 2000;
+        cloudSystem.options.maxRadius = 3000;
+        cloudSystem.options.minScale = 80;  // Larger scale for visibility at distance
+        cloudSystem.options.maxScale = 150;
+        cloudSystem.options.opacity = 0.9;
+        cloudSystem.options.rotationSpeed = 0.0003; // Increased for more visible movement
+        cloudSystem.options.distribution = 0.4; // Better distribution
+        cloudSystem.init();
+        
+        console.log("Applied 'distant clouds' preset");
+        return "Clouds are now far from the planet";
+      },
+      
+      cosmic() {
+        if (!cloudSystem) return "Cloud system not available";
+        cloudSystem.options.minRadius = 5000; // Very distant clouds
+        cloudSystem.options.maxRadius = 8000;
+        cloudSystem.options.minScale = 200; // Huge scale
+        cloudSystem.options.maxScale = 400;
+        cloudSystem.options.opacity = 0.8;
+        cloudSystem.options.rotationSpeed = 0.00008; // Slower rotation for distant effect
+        cloudSystem.init();
+        
+        console.log("Applied 'cosmic clouds' preset");
+        return "Clouds are now at cosmic distance";
+      },
+      
+      sparse() {
+        if (!cloudSystem) return "Cloud system not available";
+        cloudSystem.options.count = 20; // Fewer clouds
+        cloudSystem.options.opacity = 0.7;
+        cloudSystem.init();
+        
+        console.log("Applied 'sparse clouds' preset");
+        return "Cloud density reduced";
+      },
+      
+      dense() {
+        if (!cloudSystem) return "Cloud system not available";
+        cloudSystem.options.count = 120; // Many clouds
+        cloudSystem.options.opacity = 0.85;
+        cloudSystem.init();
+        
+        console.log("Applied 'dense clouds' preset");
+        return "Cloud density increased";
+      },
+      
+      stormy() {
+        if (!cloudSystem) return "Cloud system not available";
+        cloudSystem.options.minRadius = 700;
+        cloudSystem.options.maxRadius = 900;
+        cloudSystem.options.minScale = 50;
+        cloudSystem.options.maxScale = 120;
+        cloudSystem.options.count = 150;
+        cloudSystem.options.opacity = 0.95;
+        cloudSystem.options.rotationSpeed = 0.0007; // Faster rotation
+        cloudSystem.options.color = 0xaaaaaa; // Darker clouds
+        cloudSystem.init();
+        
+        console.log("Applied 'stormy clouds' preset");
+        return "Storm clouds activated";
+      }
+    }
+  };
+  
+  // Add console help message for cloud options
+  console.log(`
+  // *****************************************
+  // ***** CLOUD ADJUSTMENT COMMANDS *****
+  // *****************************************
+  // Basic cloud adjustments:
+  cloudOptions.setHeight(800)     // Set cloud base height
+  cloudOptions.setScale(50)       // Set cloud size
+  cloudOptions.setCount(80)       // Set number of clouds
+  cloudOptions.setOpacity(0.8)    // Set cloud opacity (0-1)
+  cloudOptions.setSpeed(0.0005)   // Set cloud rotation speed
+  
+  // Show/hide clouds:
+  cloudOptions.showClouds()       // Make clouds very visible
+  cloudOptions.hideClouds()       // Hide clouds completely
+  
+  // Cloud style presets:
+  cloudOptions.presets.close()    // Clouds close to planet
+  cloudOptions.presets.distant()  // Clouds far from planet
+  cloudOptions.presets.cosmic()   // Extremely distant clouds
+  cloudOptions.presets.sparse()   // Fewer clouds
+  cloudOptions.presets.dense()    // Many clouds
+  cloudOptions.presets.stormy()   // Dark storm clouds
+  `);
+  
+  // Add quick access to main controls in window object
+  window.showClouds = cloudOptions.showClouds;
+  window.hideClouds = cloudOptions.hideClouds;
+}
+
+// Call this function after setupDebugCommands() is called
+setupCloudControls();
+
+// When the page loads, apply the distant cloud preset automatically
+window.addEventListener('load', () => {
+  // Short timeout to ensure cloudSystem and cloudOptions are initialized
+  setTimeout(() => {
+    if (window.cloudOptions && window.cloudOptions.presets && window.cloudOptions.presets.distant) {
+      console.log("Auto-applying distant cloud preset");
+      window.cloudOptions.presets.distant();
+    }
+  }, 1000);
+});
 
 // Call at startup
 setupDebugCommands();
