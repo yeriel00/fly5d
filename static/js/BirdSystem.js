@@ -33,7 +33,7 @@ export const BIRD_CONFIG = {
 
 // Enhanced low-poly Bird class that fits the game's visual style
 export class Bird {
-  constructor(scene, config, patternIndex = null) {
+  constructor(scene, config, patternIndex = null, initialAngleOffset = 0) {
     this.scene = scene;
     this.config = config;
     this.alive = true;
@@ -84,12 +84,18 @@ export class Bird {
     const scale = config.minScale + Math.random() * (config.maxScale - config.minScale);
     this.group.scale.set(scale, scale, scale);
     
-    // Set orbit parameters
+    // Set orbit parameters with more deliberate distribution
     this.orbitRadius = config.radius + config.minHeight + 
                        Math.random() * (config.maxHeight - config.minHeight);
     this.orbitSpeed = config.minSpeed + Math.random() * (config.maxSpeed - config.minSpeed);
-    this.orbitAngle = Math.random() * Math.PI * 2;
-    this.orbitHeight = Math.random() * 50 - 25; // Random height variation
+    
+    // Use provided angle offset for even distribution around the sphere
+    // Add slight randomization within the assigned sector
+    const sectorRandomization = Math.random() * 0.2 - 0.1; // ±10% variation within sector
+    this.orbitAngle = initialAngleOffset + sectorRandomization;
+    
+    // Randomize height but with smaller variation to prevent dramatic shifts
+    this.orbitHeight = Math.random() * 30 - 15; // Reduced from ±25 to ±15
     
     // Select flight pattern
     this.flightPattern = config.flightPatterns[
@@ -100,8 +106,72 @@ export class Bird {
     this.directionChangeTime = Date.now() + (Math.random() * 5000);
     this.randomFactor = Math.random() * Math.PI;
     
+    // IMPORTANT: Calculate initial position using the exact same logic as updatePosition 
+    // This ensures the bird doesn't "jump" on the first update
+    let initialPos = this.calculatePosition(0);
+    this.group.position.copy(initialPos);
+    
+    // Make bird face the direction of travel - also same as update method
+    this.orientBird();
+    
     // Add to scene
     scene.add(this.group);
+  }
+  
+  // New helper method to calculate position using the same logic as updatePosition
+  // This ensures consistency between initial position and updates
+  calculatePosition(deltaTime) {
+    // Apply orbit angle update if delta is provided (not for initial position)
+    if (deltaTime > 0) {
+      this.orbitAngle += this.orbitSpeed * deltaTime;
+    }
+    
+    let x, y, z;
+    
+    // Apply selected flight pattern - EXACT SAME LOGIC as updatePosition
+    switch (this.flightPattern.type) {
+      case 'circle':
+        x = this.orbitRadius * Math.cos(this.orbitAngle);
+        z = this.orbitRadius * Math.sin(this.orbitAngle);
+        y = this.orbitHeight + this.flightPattern.height;
+        break;
+        
+      case 'figure8':
+        // Figure 8 pattern
+        x = this.orbitRadius * Math.cos(this.orbitAngle);
+        z = this.orbitRadius * Math.sin(this.orbitAngle * 2) * 0.5;
+        y = this.orbitHeight + this.flightPattern.height + Math.sin(this.orbitAngle) * 15;
+        break;
+        
+      case 'wavy':
+        // Wavy up and down pattern
+        x = this.orbitRadius * Math.cos(this.orbitAngle);
+        z = this.orbitRadius * Math.sin(this.orbitAngle);
+        y = this.orbitHeight + this.flightPattern.height + 
+            Math.sin(this.orbitAngle * 3) * this.flightPattern.amplitude;
+        break;
+        
+      case 'random':
+        // Random direction changes
+        if (deltaTime > 0 && Date.now() > this.directionChangeTime) {
+          this.randomFactor = Math.random() * Math.PI * 2;
+          this.directionChangeTime = Date.now() + this.flightPattern.changeTime;
+        }
+        
+        x = this.orbitRadius * Math.cos(this.orbitAngle + this.randomFactor);
+        z = this.orbitRadius * Math.sin(this.orbitAngle + this.randomFactor);
+        y = this.orbitHeight + Math.sin(this.orbitAngle * 0.5) * 15;
+        break;
+        
+      default:
+        // Default circular pattern
+        x = this.orbitRadius * Math.cos(this.orbitAngle);
+        z = this.orbitRadius * Math.sin(this.orbitAngle);
+        y = this.orbitHeight;
+    }
+    
+    // Return the calculated position without applying it yet
+    return new THREE.Vector3(x, y, z);
   }
   
   createWings(color) {
@@ -187,8 +257,19 @@ export class Bird {
     // Update wing flapping animation - more natural sinusoidal movement
     this.animateWings(deltaTime);
     
-    // Update orbit position based on selected flight pattern
-    this.updatePosition(deltaTime, allBirds);
+    // Calculate new position using shared calculation method
+    const newPosition = this.calculatePosition(deltaTime);
+    
+    // Apply flocking behavior if configured
+    if (this.config.flockingFactor > 0 && allBirds && allBirds.length > 1) {
+      const flockInfluence = this.calculateFlockInfluence(allBirds);
+      newPosition.x += flockInfluence.x * this.config.flockingFactor * deltaTime * 10;
+      newPosition.y += flockInfluence.y * this.config.flockingFactor * deltaTime * 10;
+      newPosition.z += flockInfluence.z * this.config.flockingFactor * deltaTime * 10;
+    }
+    
+    // Update position
+    this.group.position.copy(newPosition);
     
     // Make bird face the direction of travel
     this.orientBird();
@@ -210,66 +291,6 @@ export class Bird {
     // Add subtle body movements to match wing flaps
     this.body.rotation.z = Math.sin(flapPhase * wingFlapSpeed * 0.5) * 0.05;
     this.head.rotation.z = Math.sin(flapPhase * wingFlapSpeed * 0.3) * 0.03;
-  }
-  
-  updatePosition(deltaTime, allBirds) {
-    // Update orbit angle
-    this.orbitAngle += this.orbitSpeed * deltaTime;
-    
-    let x, y, z;
-    
-    // Apply selected flight pattern
-    switch (this.flightPattern.type) {
-      case 'circle':
-        x = this.orbitRadius * Math.cos(this.orbitAngle);
-        z = this.orbitRadius * Math.sin(this.orbitAngle);
-        y = this.orbitHeight + this.flightPattern.height;
-        break;
-        
-      case 'figure8':
-        // Figure 8 pattern
-        x = this.orbitRadius * Math.cos(this.orbitAngle);
-        z = this.orbitRadius * Math.sin(this.orbitAngle * 2) * 0.5;
-        y = this.orbitHeight + this.flightPattern.height + Math.sin(this.orbitAngle) * 15;
-        break;
-        
-      case 'wavy':
-        // Wavy up and down pattern
-        x = this.orbitRadius * Math.cos(this.orbitAngle);
-        z = this.orbitRadius * Math.sin(this.orbitAngle);
-        y = this.orbitHeight + this.flightPattern.height + 
-            Math.sin(this.orbitAngle * 3) * this.flightPattern.amplitude;
-        break;
-        
-      case 'random':
-        // Random direction changes
-        if (Date.now() > this.directionChangeTime) {
-          this.randomFactor = Math.random() * Math.PI * 2;
-          this.directionChangeTime = Date.now() + this.flightPattern.changeTime;
-        }
-        
-        x = this.orbitRadius * Math.cos(this.orbitAngle + this.randomFactor);
-        z = this.orbitRadius * Math.sin(this.orbitAngle + this.randomFactor);
-        y = this.orbitHeight + Math.sin(this.orbitAngle * 0.5) * 15;
-        break;
-        
-      default:
-        // Default circular pattern
-        x = this.orbitRadius * Math.cos(this.orbitAngle);
-        z = this.orbitRadius * Math.sin(this.orbitAngle);
-        y = this.orbitHeight;
-    }
-    
-    // Apply flocking behavior if configured
-    if (this.config.flockingFactor > 0 && allBirds && allBirds.length > 1) {
-      const flockInfluence = this.calculateFlockInfluence(allBirds);
-      x += flockInfluence.x * this.config.flockingFactor * deltaTime * 10;
-      y += flockInfluence.y * this.config.flockingFactor * deltaTime * 10;
-      z += flockInfluence.z * this.config.flockingFactor * deltaTime * 10;
-    }
-    
-    // Update position
-    this.group.position.set(x, y, z);
   }
   
   calculateFlockInfluence(allBirds) {
@@ -754,14 +775,76 @@ export class BirdSystem {
     // Clear any existing birds
     this.cleanup();
     
-    // Create new birds
-    for (let i = 0; i < this.config.count; i++) {
-      // Distribute birds evenly across flight patterns for variety
+    // Create new birds with comprehensive sphere distribution
+    const birdCount = this.config.count;
+    
+    // Use Fibonacci sphere distribution for much better coverage of the entire sphere
+    const goldenRatio = (1 + Math.sqrt(5)) / 2;
+    
+    for (let i = 0; i < birdCount; i++) {
+      // Fibonacci sphere distribution formula gives evenly distributed points on a sphere
+      const y = 1 - (i / (birdCount - 1)) * 2; // y goes from 1 to -1
+      const radius = Math.sqrt(1 - y * y);     // radius at y
+      
+      // Golden angle increment around the sphere
+      const theta = i * (2 * Math.PI / goldenRatio); 
+      
+      // Convert to Cartesian coordinates
+      const x = radius * Math.cos(theta);
+      const z = radius * Math.sin(theta);
+      
+      // Create a direction vector from the center to this point on the sphere
+      const dirVector = new THREE.Vector3(x, y, z).normalize();
+      
+      // Calculate even angle distribution around orbit paths
+      const angleOffset = (i / birdCount) * Math.PI * 2;
+      
+      // Use a height that scales with position in the distribution
+      // This spreads birds across the full height range
+      const heightPercentage = i / birdCount;
+      const orbitHeight = this.config.minHeight + 
+                         (this.config.maxHeight - this.config.minHeight) * heightPercentage;
+      
+      // Select a flight pattern based on position - distribute patterns evenly
       const patternIndex = i % this.config.flightPatterns.length;
-      this.birds.push(new Bird(this.scene, this.config, patternIndex));
+      
+      // Create bird with specific direction and pattern
+      const bird = new Bird(
+        this.scene, 
+        this.config, 
+        patternIndex,
+        angleOffset
+      );
+      
+      // Set custom orbit parameters based on the Fibonacci distribution
+      bird.orbitAngle = theta;
+      bird.orbitRadius = this.config.radius + orbitHeight;
+      
+      // Create a reference orbit axis based on bird's position on the sphere
+      // This ensures varied orbit planes across the entire sphere
+      const up = new THREE.Vector3(0, 1, 0);
+      const axis = new THREE.Vector3().crossVectors(up, dirVector).normalize();
+      if (axis.lengthSq() < 0.01) {
+        // Handle case when dirVector is parallel to up
+        axis.set(1, 0, 0);
+      }
+      
+      // Calculate angle between up and dirVector
+      const angle = up.angleTo(dirVector);
+      
+      // Store orbit plane data
+      bird.orbitAxis = axis;
+      bird.orbitPlaneRotation = new THREE.Euler().setFromVector3(
+        axis.clone().multiplyScalar(angle)
+      );
+      
+      // Update bird's initial position with the new orbit parameters
+      bird.calculatePosition(0);
+      
+      this.birds.push(bird);
     }
     
-    console.log(`Spawned ${this.birds.length} birds`);
+    console.log(`Spawned ${this.birds.length} birds with full spherical distribution`);
     return this.birds;
   }
   

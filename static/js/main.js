@@ -551,8 +551,17 @@ const fpsMonitor = new FPSMonitor({
 });
 
 // Initialize player after world is built
-initEnvironment(scene, 'medium', worldConfig, (placerFunc) => {
+initEnvironment(scene, 'medium', worldConfig, (placerFunc, pineTreePositions) => {
   placeOnSphereFunc = placerFunc;
+  
+  // Store pine tree positions for apple tree spacing
+  if (pineTreePositions && pineTreePositions.length > 0) {
+    pineTrees = collidables.filter(obj => 
+      obj.mesh?.name === "PineTree" || 
+      obj.mesh?.userData?.isPineTree
+    );
+    debug(`Received ${pineTrees.length} pine tree positions for spacing`);
+  }
   
   // After world is built, add low-poly details
   enhanceEnvironment();
@@ -716,23 +725,30 @@ initEnvironment(scene, 'medium', worldConfig, (placerFunc) => {
   console.log(`Created ${deerSystem.deer.length} deer`);
   window.deerSystem = deerSystem;
   
-  // Initialize Cloud System with distant preset parameters as default
-  cloudSystem = new CloudSystem(scene, {
-    count: 100,               // Good number of clouds for visibility 
-    minRadius: 2000,          // Far from the planet (distant preset)
-    maxRadius: 3000,          // Upper atmosphere limit (distant preset)
-    minScale: 80,             // Larger clouds to be visible from distance
-    maxScale: 150,            // Large max size for variety
-    rotationSpeed: 0.0003,    // Increased for more noticeable movement
-    opacity: 0.9,             // Higher opacity to be visible
-    distribution: 0.4,        // Better distribution around the planet
-    fogDensity: 0.000008      // Light fog for cosmic distances
-  });
+  // Define the desired cloud options (distant preset) *before* creating the system
+  const distantCloudOptions = {
+    count: 100,
+    minRadius: 2500, // INCREASED: Further out (from 2000)
+    maxRadius: 3800, // INCREASED: Further out (from 3000)
+    minScale: 90,    // Slightly larger scale for distance
+    maxScale: 170,   // Slightly larger scale for distance
+    rotationSpeed: 0.0007, // Slightly slower for distance effect (from 0.0009)
+    opacity: 0.85,   // Slightly less opaque for distance
+    distribution: 0.4,
+    fogDensity: 0.000012, // INCREASED: More fog for distance (from 0.000008)
+    fogColor: 0x7a9fdd, // Slightly adjusted fog color for depth
+    sphereRadius: R // Ensure sphereRadius is passed
+  };
+  console.log("[Main] Using distant cloud options for initial creation:", distantCloudOptions);
 
-  // Add cloud system to global for console access
-  window.cloudSystem = cloudSystem;
+  // Initialize Cloud System directly with the distant preset options
+  cloudSystem = new CloudSystem(scene, distantCloudOptions);
+  
+  // Explicitly call init() *after* creating the instance with the correct options
+  cloudSystem.init(); 
+  console.log("[Main] CloudSystem explicitly initialized with distant options.");
 
-  // Start animation loop after player is created
+  // Start animation loop after player and cloud system are created and initialized
   animate();
   
   // Ensure camera far plane is adjusted to see distant clouds
@@ -742,6 +758,14 @@ initEnvironment(scene, 'medium', worldConfig, (placerFunc) => {
     player.camera.updateProjectionMatrix();
     console.log(`Camera far plane set to: ${player.camera.far}`);
   }
+
+  // Apply speed boost *after* initialization is fully complete
+  setTimeout(() => {
+    if (cloudSystem && cloudSystem.setOrbitSpeed) {
+      cloudSystem.setOrbitSpeed(4.0); // Adjusted speed boost (from 5.0)
+      console.log("[Main] Cloud movement speed adjusted post-initialization.");
+    }
+  }, cloudSystem.initializationTime + 500); // Wait for initialization + buffer
 });
 
 // Remove particle setup - commenting out
@@ -2373,12 +2397,6 @@ function initializePlayerUI() {
       const isTree = obj.mesh?.userData?.isTree || obj.mesh?.userData?.isPineTree;
       if (isTree) {
         // Use moderate trunk radius for better visual collision point
-        obj.trunkRadius = Math.max(obj.radius * 0.3, 0.7); // Smaller radius for visual accuracy
-        
-        // Ensure collision height is properly set
-        obj.collisionHeight = obj.radius * 3; // Make trunks tall enough
-        
-        // Set bounce-specific parameters
         obj.bounceFactor = 0.7; // Higher bounce factor for trees specifically
         
         treeCount++;
@@ -2538,7 +2556,8 @@ function setupCloudControls() {
         cloudSystem.options.minScale = 30;
         cloudSystem.options.maxScale = 60;
         cloudSystem.options.opacity = 0.9;
-        cloudSystem.init();
+        // Pass true to preserve cloud positions during reinitialization
+        cloudSystem.init(true);
         
         console.log("Applied 'close clouds' preset");
         return "Clouds are now close to the planet";
@@ -2553,12 +2572,14 @@ function setupCloudControls() {
         cloudSystem.options.opacity = 0.9;
         cloudSystem.options.rotationSpeed = 0.0003; // Increased for more visible movement
         cloudSystem.options.distribution = 0.4; // Better distribution
-        cloudSystem.init();
+        // Pass true to preserve cloud positions during reinitialization
+        cloudSystem.init(true);
         
         console.log("Applied 'distant clouds' preset");
         return "Clouds are now far from the planet";
       },
       
+      // Similar updates for other presets
       cosmic() {
         if (!cloudSystem) return "Cloud system not available";
         cloudSystem.options.minRadius = 5000; // Very distant clouds
@@ -2567,7 +2588,7 @@ function setupCloudControls() {
         cloudSystem.options.maxScale = 400;
         cloudSystem.options.opacity = 0.8;
         cloudSystem.options.rotationSpeed = 0.00008; // Slower rotation for distant effect
-        cloudSystem.init();
+        cloudSystem.init(true); // Add position preservation
         
         console.log("Applied 'cosmic clouds' preset");
         return "Clouds are now at cosmic distance";
@@ -2577,7 +2598,7 @@ function setupCloudControls() {
         if (!cloudSystem) return "Cloud system not available";
         cloudSystem.options.count = 20; // Fewer clouds
         cloudSystem.options.opacity = 0.7;
-        cloudSystem.init();
+        cloudSystem.init(true); // Add position preservation
         
         console.log("Applied 'sparse clouds' preset");
         return "Cloud density reduced";
@@ -2587,7 +2608,7 @@ function setupCloudControls() {
         if (!cloudSystem) return "Cloud system not available";
         cloudSystem.options.count = 120; // Many clouds
         cloudSystem.options.opacity = 0.85;
-        cloudSystem.init();
+        cloudSystem.init(true); // Add position preservation
         
         console.log("Applied 'dense clouds' preset");
         return "Cloud density increased";
@@ -2603,7 +2624,7 @@ function setupCloudControls() {
         cloudSystem.options.opacity = 0.95;
         cloudSystem.options.rotationSpeed = 0.0007; // Faster rotation
         cloudSystem.options.color = 0xaaaaaa; // Darker clouds
-        cloudSystem.init();
+        cloudSystem.init(true); // Add position preservation
         
         console.log("Applied 'stormy clouds' preset");
         return "Storm clouds activated";
@@ -2643,18 +2664,4 @@ function setupCloudControls() {
 
 // Call this function after setupDebugCommands() is called
 setupCloudControls();
-
-// When the page loads, apply the distant cloud preset automatically
-window.addEventListener('load', () => {
-  // Short timeout to ensure cloudSystem and cloudOptions are initialized
-  setTimeout(() => {
-    if (window.cloudOptions && window.cloudOptions.presets && window.cloudOptions.presets.distant) {
-      console.log("Auto-applying distant cloud preset");
-      window.cloudOptions.presets.distant();
-    }
-  }, 1000);
-});
-
-// Call at startup
-setupDebugCommands();
 
