@@ -42,7 +42,10 @@ class CloudSystem {
       // NEW: Cloud complexity parameters for more organic shapes
       geometryDetail: 0.65,    // Controls overall geometry complexity
       layerCount: 2,           // Number of overlapping cloud layers for depth
-      ...options
+      skyboxTexturePath: null, // UPDATED: Path for the single skybox texture file (e.g., 'static/textures/sky.hdr')
+      // REMOVED: skyboxImages option
+      // skyboxImages: [ ... ],
+      ...options 
     };
     this.clouds = [];
     this.cloudGroups = [];
@@ -153,6 +156,9 @@ class CloudSystem {
     // REMOVED: setTimeout for positionsStabilized
     
     console.log(`[CloudSystem] Init finished. ${this.clouds.length} clouds ready for fade-in.`); // Log end
+
+    // NEW: Setup skybox if path is provided
+    this._setupSkybox();
   }
 
   /**
@@ -690,6 +696,128 @@ class CloudSystem {
       mesh.rotateY(Math.PI);
     });
     console.log("[CloudSystem] _updateInitialPositions completed."); // Add log for confirmation
+  }
+
+  // UPDATED: Method to setup the skybox from a single cubemap cross image
+  _setupSkybox() {
+    if (this.options.skyboxTexturePath) {
+      console.log(`[CloudSystem] Loading single cubemap image from: ${this.options.skyboxTexturePath}`);
+      const loader = new THREE.TextureLoader();
+
+      try {
+        loader.load(
+          this.options.skyboxTexturePath,
+          (texture) => {
+            console.log(`[CloudSystem] Single cubemap image loaded successfully.`);
+
+            const image = texture.image;
+            if (!image) {
+              console.error('[CloudSystem] Texture loaded, but image data is missing.');
+              this.scene.background = new THREE.Color(0x87CEEB); // Fallback
+              this.scene.environment = null;
+              return;
+            }
+
+            // --- Create CubeTexture from the single image ---
+
+            // Assuming horizontal cross layout (4 wide, 3 high)
+            //      py
+            // nx | pz | px | nz
+            //      ny
+            const faceWidth = image.width / 4;
+            const faceHeight = image.height / 3;
+
+            if (faceWidth !== faceHeight) {
+              console.warn(`[CloudSystem] Cubemap image faces are not square (${faceWidth}x${faceHeight}). This might cause distortion.`);
+              // Proceed anyway, but log warning
+            }
+            if (image.width % 4 !== 0 || image.height % 3 !== 0) {
+               console.warn(`[CloudSystem] Cubemap image dimensions (${image.width}x${image.height}) don't match expected 4x3 layout ratio.`);
+            }
+
+
+            const faces = ['px', 'nx', 'py', 'ny', 'pz', 'nz'];
+            const canvases = [];
+            const cubeTexture = new THREE.CubeTexture();
+            cubeTexture.colorSpace = THREE.SRGBColorSpace; // Use SRGB for PNG/JPG
+
+            faces.forEach(face => {
+              const canvas = document.createElement('canvas');
+              canvas.width = faceWidth;
+              canvas.height = faceHeight;
+              const context = canvas.getContext('2d');
+
+              let sx = 0, sy = 0; // Source x, y in the large image
+
+              switch (face) {
+                case 'px': // Positive X (Right)
+                  sx = faceWidth * 2;
+                  sy = faceHeight * 1;
+                  break;
+                case 'nx': // Negative X (Left)
+                  sx = faceWidth * 0;
+                  sy = faceHeight * 1;
+                  break;
+                case 'py': // Positive Y (Top)
+                  sx = faceWidth * 1;
+                  sy = faceHeight * 0;
+                  break;
+                case 'ny': // Negative Y (Bottom)
+                  sx = faceWidth * 1;
+                  sy = faceHeight * 2;
+                  break;
+                case 'pz': // Positive Z (Front)
+                  sx = faceWidth * 1;
+                  sy = faceHeight * 1;
+                  break;
+                case 'nz': // Negative Z (Back)
+                  sx = faceWidth * 3;
+                  sy = faceHeight * 1;
+                  break;
+              }
+
+              // Draw the specific face from the loaded image onto the canvas
+              context.drawImage(
+                image,
+                sx, sy, faceWidth, faceHeight, // Source rectangle
+                0, 0, faceWidth, faceHeight   // Destination rectangle
+              );
+              canvases.push(canvas);
+            });
+
+            // Assign canvases to the CubeTexture
+            cubeTexture.images = canvases;
+            cubeTexture.needsUpdate = true; // IMPORTANT: Tell Three.js to upload the texture data
+
+            this.scene.background = cubeTexture;
+            this.scene.environment = cubeTexture; // Use for reflections
+
+            console.log("[CloudSystem] Scene background and environment updated with generated CubeTexture.");
+
+            // Clean up original texture if not needed elsewhere
+            texture.dispose();
+
+          },
+          undefined, // onProgress callback (optional)
+          (error) => {
+            console.error(`[CloudSystem] Error loading single cubemap image from ${this.options.skyboxTexturePath}:`, error);
+            this.scene.background = new THREE.Color(0x87CEEB); // Fallback
+            this.scene.environment = null;
+          }
+        );
+      } catch (error) {
+        console.error(`[CloudSystem] Failed to initiate single cubemap image loading:`, error);
+        this.scene.background = new THREE.Color(0x87CEEB); // Fallback
+        this.scene.environment = null;
+      }
+    } else {
+      console.log("[CloudSystem] No skyboxTexturePath provided, using default background.");
+      // Ensure a default background if no skybox is used
+      if (!this.scene.background) {
+        this.scene.background = new THREE.Color(0x87CEEB);
+      }
+      this.scene.environment = null; // Ensure environment is null if no skybox
+    }
   }
 
   update(deltaTime) {

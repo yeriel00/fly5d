@@ -22,7 +22,6 @@ import { showDebugOverlay } from './debug-utils.js'; // Import debug overlay
 import { BirdSystem } from './BirdSystem.js';
 import { DeerSystem } from './DeerSystem.js'; // Import DeerSystem
 import CloudSystem from './CloudSystem.js'; // Import our new CloudSystem
-
 // --- Constants ---
 const R = 400; // INCREASED radius from 300 to 400 for more spacious feel
 
@@ -737,7 +736,10 @@ initEnvironment(scene, 'medium', worldConfig, (placerFunc, pineTreePositions) =>
     distribution: 0.4,
     fogDensity: 0.000012, // INCREASED: More fog for distance (from 0.000008)
     fogColor: 0x7a9fdd, // Slightly adjusted fog color for depth
-    sphereRadius: R // Ensure sphereRadius is passed
+    sphereRadius: R, // Ensure sphereRadius is passed
+    // UPDATED: Specify the path to your SINGLE skybox texture file
+    skyboxTexturePath: 'static/images/StandardCubeMap.png', // ADJUST FILENAME AND PATH
+    // REMOVED: skyboxImages array is no longer needed
   };
   console.log("[Main] Using distant cloud options for initial creation:", distantCloudOptions);
 
