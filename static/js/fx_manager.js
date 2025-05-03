@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-
+ 
 /**
  * Manages visual effects for the spherical world
  */
@@ -8,25 +8,28 @@ export default class FXManager {
     this.scene = scene;
     this.camera = camera;
     this.renderer = renderer;
-    
+
     // Initialize effects containers
     this.particles = {};
-    this.lights = {};
+    this.lights = {}; // Keep lights object, but setupSky will be removed
     this.timeOfDay = 0; // 0-1 represents time of day cycle
-    
+
     // Clock for time-based effects
     this.clock = new THREE.Clock();
-    
+
     // Setup renderer for better visual quality
     this.setupRenderer();
-    
-    // Setup sky and lighting
-    this.setupSky();
+
+    // REMOVED: Setup sky and lighting call
+    // this.setupSky();
 
     // Add atmospheric fog
     this.setupAtmosphericFog();
+
+    // ADDED: Basic lighting setup here since setupSky is removed
+    this._setupBasicLighting();
   }
-  
+
   setupRenderer() {
     // Enable shadow casting
     this.renderer.shadowMap.enabled = true;
@@ -43,18 +46,26 @@ export default class FXManager {
     // this.renderer.physicallyCorrectLights = true;
     this.renderer.useLegacyLights = false; // false = physically correct
   }
-  
+
+  // REMOVED: setupSky() method entirely
+  /*
   setupSky() {
-    // Create a hemisphere light for ambient lighting
-    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
-    hemiLight.position.set(0, 1, 0);
-    this.scene.add(hemiLight);
-    this.lights.hemiLight = hemiLight;
-    
-    // Main directional light (sun)
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1);
-    dirLight.position.set(500, 500, 500);
-    dirLight.castShadow = true;
+    // ... removed hemisphere light, directional light, and createStars call ...
+  }
+  */
+
+  // ADDED: Basic lighting setup (can be expanded later)
+  _setupBasicLighting() {
+    // Simple ambient light
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    this.scene.add(ambientLight);
+    this.lights.ambientLight = ambientLight;
+
+    // Simple directional light (sun placeholder)
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(500, 500, 500); // Default position
+    dirLight.castShadow = true; // Keep shadows if needed
+    // Configure shadows as before
     dirLight.shadow.camera.top = 100;
     dirLight.shadow.camera.bottom = -100;
     dirLight.shadow.camera.left = -100;
@@ -62,10 +73,8 @@ export default class FXManager {
     dirLight.shadow.mapSize.width = 2048;
     dirLight.shadow.mapSize.height = 2048;
     this.scene.add(dirLight);
-    this.lights.dirLight = dirLight;
-    
-    // Create stars for night sky
-    this.createStars();
+    this.lights.dirLight = dirLight; // Keep reference for potential updates
+    console.log('[FXManager] Basic lighting setup complete.');
   }
 
   /**
@@ -76,25 +85,24 @@ export default class FXManager {
     // Enhanced atmospheric fog with a light blue tint
     const fogColor = new THREE.Color(0xb8d0ff);
     const fogDensity = 0.00018; // Slightly increased for more visible atmosphere
-    
+
     // Use exponential fog for more realistic atmosphere effect
     this.fog = new THREE.FogExp2(fogColor, fogDensity);
     this.scene.fog = this.fog;
-    
+
     // Store initial values for day/night cycle adjustments
     this.initialFogParams = {
       color: fogColor.clone(),
       density: fogDensity
     };
-    
-    // Add a slight blue tint to the scene background to match fog
-    // This creates a more cohesive atmospheric look
-    const backgroundTint = fogColor.clone().lerp(new THREE.Color(0x87CEEB), 0.5);
-    this.scene.background = backgroundTint;
-    
+
+    // REMOVED: Background color setting - Skybox will handle this
+    // const backgroundTint = fogColor.clone().lerp(new THREE.Color(0x87CEEB), 0.5);
+    // this.scene.background = backgroundTint;
+
     console.log('Atmospheric fog initialized with enhanced settings');
   }
-  
+
   /**
    * Update fog parameters based on time of day
    * @param {number} sunIntensity - Intensity of sunlight (0-1)
@@ -102,58 +110,37 @@ export default class FXManager {
    */
   updateFogParams(sunIntensity) {
     if (!this.fog) return;
-    
+
     // Adjust fog color based on time of day
     // Daytime: light blue, nighttime: darker blue with a hint of purple
     const dayFogColor = this.initialFogParams.color.clone();
     const nightFogColor = new THREE.Color(0x202040); // Dark blue-purple for night
-    
+
     // Interpolate between day and night colors
     this.fog.color.copy(dayFogColor).lerp(nightFogColor, 1 - sunIntensity);
-    
+
     // Increase fog density at night for a more mystical atmosphere
     const baseDensity = this.initialFogParams.density;
     this.fog.density = baseDensity * (1 + (1 - sunIntensity) * 0.5);
-    
-    // Also update scene background color to match the atmospheric mood
-    if (this.scene.background) {
+
+    // REMOVED: Scene background color update
+    /*
+    if (this.scene.background instanceof THREE.Color) { // Only update if background is a color
       const dayBackground = new THREE.Color(0x87CEEB); // Sky blue for day
       const nightBackground = new THREE.Color(0x101025); // Dark blue for night
-      
+
       this.scene.background.copy(dayBackground).lerp(nightBackground, 1 - sunIntensity);
     }
+    */
   }
-  
+
+  // REMOVED: createStars() method entirely
+  /*
   createStars() {
-    const starGeometry = new THREE.BufferGeometry();
-    const starCount = 1000;
-    const starPositions = [];
-    
-    for (let i = 0; i < starCount; i++) {
-      const x = THREE.MathUtils.randFloatSpread(2000);
-      const y = THREE.MathUtils.randFloatSpread(2000);
-      const z = THREE.MathUtils.randFloatSpread(2000);
-      starPositions.push(x, y, z);
-    }
-    
-    starGeometry.setAttribute(
-      'position',
-      new THREE.Float32BufferAttribute(starPositions, 3)
-    );
-    
-    const starMaterial = new THREE.PointsMaterial({
-      color: 0xffffff,
-      size: 1,
-      transparent: true,
-      opacity: 0,
-      sizeAttenuation: false
-    });
-    
-    const stars = new THREE.Points(starGeometry, starMaterial);
-    this.scene.add(stars);
-    this.stars = stars;
+    // ... removed star creation code ...
   }
-  
+  */
+
   createParticleTexture() {
     const canvas = document.createElement('canvas');
     canvas.width = 64;
@@ -297,41 +284,45 @@ export default class FXManager {
   updateDayNightCycle(delta) {
     // Advance time of day (complete cycle in 5 minutes)
     this.timeOfDay = (this.timeOfDay + delta / 300) % 1;
-    
+
     // Calculate sun angle based on time of day (0 = noon, 0.5 = midnight)
     const sunAngle = Math.PI * (this.timeOfDay * 2 - 0.5);
-    
-    // Position sun/moon
+
+    // Position sun/moon (using the basic dirLight)
     const distance = 1000;
     const x = Math.cos(sunAngle) * distance;
     const y = Math.sin(sunAngle) * distance;
-    
-    this.lights.dirLight.position.set(x, y, 0);
-    
-    // Adjust light intensity based on time of day
-    let sunIntensity = Math.sin(Math.PI * (1 - this.timeOfDay * 2)) * 0.9 + 0.1;
-    sunIntensity = Math.max(0.05, sunIntensity);
-    this.lights.dirLight.intensity = sunIntensity;
-    
-    // Hemisphere light changes color based on time of day
+
+    if (this.lights.dirLight) { // Check if dirLight exists
+        this.lights.dirLight.position.set(x, y, 0);
+
+        // Adjust light intensity based on time of day
+        let sunIntensity = Math.sin(Math.PI * (1 - this.timeOfDay * 2)) * 0.9 + 0.1;
+        sunIntensity = Math.max(0.05, sunIntensity);
+        this.lights.dirLight.intensity = sunIntensity;
+    }
+
+    // REMOVED: Hemisphere light update
+    /*
     const skyColor = new THREE.Color(
-      0.5 + 0.5 * sunIntensity,
-      0.5 + 0.5 * sunIntensity,
-      0.8 + 0.2 * sunIntensity
+      // ...
     );
     const groundColor = new THREE.Color(0.3, 0.2, 0.1);
     this.lights.hemiLight.color.copy(skyColor);
     this.lights.hemiLight.groundColor.copy(groundColor);
     this.lights.hemiLight.intensity = 0.3 + 0.4 * sunIntensity;
-    
+    */
+
     // Update fog parameters
     this.updateFogParams(sunIntensity);
-    
-    // Show/hide stars based on time of day
+
+    // REMOVED: Star visibility update
+    /*
     if (this.stars) {
       const isNight = this.timeOfDay > 0.25 && this.timeOfDay < 0.75;
       this.stars.material.opacity = isNight ? 0.8 : 0;
     }
+    */
   }
   
   updateWaterfall(id, delta) {
