@@ -2,10 +2,10 @@
 
 // Import Three.js and our custom controls
 import * as THREE from 'three';
-import SphereControls from './SphereControls.js';
+// import SphereControls from './SphereControls.js';
 // Import the FULL terrain height function and initEnvironment
 import { initEnvironment, collidables, getFullTerrainHeight } from './world_objects.js';
-import OrientationHelper from './OrientationHelper.js';
+// import OrientationHelper from './OrientationHelper.js';
 import FXManager from './fx_manager.js';
 import LowPolyGenerator from './low_poly_generator.js';
 // import AudioManager from './audio_manager.js'; // Comment out the audio manager import if you don't need it
@@ -14,11 +14,11 @@ import Player from './player.js';
 import TWEEN from '/static/js/libs/tween.esm.js';
 // Add import at the top with other imports
 import FPSMonitor from './fps_monitor.js';
-import AppleSystem from './AppleSystem.js'; // Add this import
+// import AppleSystem from './AppleSystem.js'; // Add this import
 // Add CrosshairSystem import
 import CrosshairSystem from './CrosshairSystem.js';
 import AppleGrowthManager from './apple-growth-manager.js';
-import { showDebugOverlay } from './debug-utils.js'; // Import debug overlay
+// import { showDebugOverlay } from './debug-utils.js'; // Import debug overlay
 import { BirdSystem } from './BirdSystem.js';
 import { DeerSystem } from './DeerSystem.js'; // Import DeerSystem
 import CloudSystem from './CloudSystem.js'; // Import our new CloudSystem
@@ -953,6 +953,11 @@ function animate(timestamp) {
   // Update the cloud system
   if (cloudSystem) {
     cloudSystem.update(delta);
+  }
+
+  // Update FX Manager
+  if (fxManager) {
+    fxManager.update();
   }
 
   // Render scene with player camera
