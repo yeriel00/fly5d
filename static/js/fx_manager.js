@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { VolumetricFog } from './shaders/VolumetricFogShader.js';
  
 /**
  * Manages visual effects for the spherical world
@@ -28,6 +29,12 @@ export default class FXManager {
 
     // ADDED: Basic lighting setup here since setupSky is removed
     this._setupBasicLighting();
+    
+    // ADDED: Initialize the volumetric ground fog effect
+    this.setupGroundFog();
+    
+    // ADDED: Ensure fog is applied to all materials including MeshBasicMaterial
+    this.enableFogForAllMaterials();
   }
 
   setupRenderer() {
@@ -81,35 +88,119 @@ export default class FXManager {
 
   /**
    * Setup atmospheric fog for the scene
+   * @param {number} sphereRadius - Radius of the sphere world (affects fog density)
    * @private
    */
-  setupAtmosphericFog() {
-    // MOON THEME: Darker, cooler fog
-    const fogColor = new THREE.Color(0x1a2a4a); // Dark blue-grey
-    const fogDensity = 0.00012; // Slightly lower density for clearer night view
-
-    // Use exponential fog for more realistic atmosphere effect
+  setupAtmosphericFog(sphereRadius = 400) {
+    // Get sphere radius from parameter or use default
+    const radius = sphereRadius || 400;
+    
+    // ADJUSTED: Simplified density calculation for more predictable results
+    const baseDensity = 0.0015; // Slightly increased base density
+    const fogDensity = baseDensity; // Use base density directly for now
+    
+    // ENHANCED: More noticeable fog color with slight blue tint
+    const fogColor = new THREE.Color(0x667788); // Adjusted color slightly
+    
+    // Use exponential fog with adjusted density for more noticeable effect
     this.fog = new THREE.FogExp2(fogColor, fogDensity);
     this.scene.fog = this.fog;
-
-    // REMOVED: initialFogParams storage - no longer needed for day/night cycle
-
-    console.log('Atmospheric fog initialized for moonlit theme.');
+    
+    // Store the original density for toggling/adjusting later
+    this.fogSettings = {
+      originalDensity: fogDensity,
+      radius: radius,
+      grassLevel: 6 // Match grass height from worldConfig
+    };
+    
+    console.log(`Atmospheric fog initialized with density (${fogDensity})`); // Updated log
+    return this.fog;
   }
 
   /**
-   * Update fog parameters based on time of day - REMOVED
-   * @param {number} sunIntensity - Intensity of sunlight (0-1)
-   * @private
+   * Initialize the volumetric ground fog effect
+   * This creates realistic fog that emanates from the ground surface
+   * @param {Object} options - Customization options for the fog
    */
-  // updateFogParams(sunIntensity) { ... } // REMOVED
-
-  // REMOVED: createStars() method entirely
-  /*
-  createStars() {
-    // ... removed star creation code ...
+  setupGroundFog(options = {}) {
+    const fogOptions = {
+      // Visual style
+      fogColor: new THREE.Color(0x8bb0ff), // Main fog color 
+      fogColorBottom: new THREE.Color(0xefd1b5), // Ground level fog color
+      
+      // Fog density settings
+      fogDensity: 0.00015, // Slightly reduced base density
+      fogIntensity: 25.0, // Slightly reduced intensity (was 28.0)
+      groundFogDensity: 2.0, // Slightly reduced ground density (was 2.2)
+      groundFogHeight: 15.0, // Increased height slightly
+      
+      // Fog movement and noise
+      noiseScale: 0.007, // Adjusted noise scale
+      noiseIntensity: 0.30, // Adjusted noise intensity
+      noiseSpeed: 0.03, // Speed of fog movement
+      
+      // Performance settings
+      resolution: 1.0, // INCREASED: Render fog at full resolution for max quality
+      ...options
+    };
+    
+    try {
+      console.log('[FXManager] Setting up volumetric ground fog effect...');
+      
+      // Initialize the volumetric fog post-processing effect
+      this.volumetricFog = new VolumetricFog(
+        this.renderer, 
+        this.scene,
+        this.camera, 
+        fogOptions
+      );
+      
+      // Enable the fog effect
+      this.volumetricFog.setEnabled(true);
+      
+      console.log('[FXManager] Volumetric ground fog initialized successfully');
+    } catch (error) {
+      console.error('[FXManager] Failed to initialize volumetric fog:', error);
+      this.volumetricFog = null;
+    }
+    
+    return this.volumetricFog;
   }
-  */
+
+  /**
+   * Update fog based on player position/height
+   * This creates a more atmospheric effect where fog is more
+   * visible near grass level
+   * @param {THREE.Vector3} playerPosition - Current player position
+   */
+  updateFogBasedOnHeight(playerPosition) {
+    // DISABLED this dynamic adjustment for now to simplify fog behavior
+    /*
+    if (!this.fog || !this.fogSettings) return;
+    
+    // Calculate height relative to sphere surface
+    const distanceFromCenter = playerPosition.length();
+    const heightAboveSurface = Math.max(0, distanceFromCenter - this.fogSettings.radius);
+    
+    // IMPROVED: Use adjusted base density
+    const baseFogDensity = this.fogSettings.originalDensity; // Use the original density set in setup
+    
+    // Calculate a multiplier that makes fog more visible closer to the camera
+    // ADJUSTED: Kept reduced multiplier effect
+    const heightMultiplier = 1.0; // Set to 1.0 to disable dynamic changes
+    
+    // Apply the adjusted density - higher overall than previous version
+    this.fog.density = baseFogDensity * heightMultiplier;
+    
+    // Enhance the color adjustment to be more visible
+    const baseColor = new THREE.Color(0x667788); // Use the base fog color set in setup
+    const groundFogColor = new THREE.Color(0x708090); // Slightly adjusted ground fog target color
+    const blendFactor = Math.max(0, Math.min(1, 1 - heightAboveSurface / 25));
+    
+    // Apply stronger color transition
+    this.fog.color.copy(baseColor).lerp(groundFogColor, blendFactor * 0.4); // Reduced lerp factor
+    */
+  }
 
   createParticleTexture() {
     const canvas = document.createElement('canvas');
@@ -335,6 +426,49 @@ export default class FXManager {
   }
 
   /**
+   * Ensures fog is enabled for all materials in the scene
+   * This is needed because some materials like MeshBasicMaterial don't have fog enabled by default
+   */
+  enableFogForAllMaterials() {
+    this.scene.traverse(object => {
+      if (object.isMesh && object.material) {
+        // Handle both individual materials and material arrays
+        if (Array.isArray(object.material)) {
+          object.material.forEach(material => {
+            material.fog = true;
+          });
+        } else {
+          object.material.fog = true;
+        }
+      }
+    });
+
+    // Add a hook to make sure all future materials will also have fog enabled
+    const originalAdd = this.scene.add;
+    this.scene.add = function(...objects) {
+      objects.forEach(object => {
+        if (object) {
+          // Apply fog to the object and all of its descendants
+          object.traverse(child => {
+            if (child.isMesh && child.material) {
+              if (Array.isArray(child.material)) {
+                child.material.forEach(material => {
+                  material.fog = true;
+                });
+              } else {
+                child.material.fog = true;
+              }
+            }
+          });
+        }
+      });
+      return originalAdd.call(this, ...objects);
+    };
+    
+    console.log("[FXManager] Fog enabled for all materials in scene");
+  }
+
+  /**
    * Set fog density
    * @param {number} density - New fog density (0-0.001 is a good range)
    */
@@ -371,11 +505,105 @@ export default class FXManager {
     }
   }
   
+  /**
+   * Adjust volumetric fog settings
+   * @param {Object} options - New fog parameters to apply
+   */
+  adjustFogSettings(options = {}) {
+    if (!this.volumetricFog) return;
+    
+    // Handle color changes
+    if (options.fogColor || options.fogColorBottom) {
+      this.volumetricFog.setColors(
+        options.fogColor || undefined,
+        options.fogColorBottom || undefined
+      );
+    }
+    
+    // Handle density changes
+    if (options.fogDensity !== undefined) {
+      this.volumetricFog.setDensity(options.fogDensity);
+    }
+    
+    // Handle intensity changes
+    if (options.fogIntensity !== undefined) {
+      this.volumetricFog.setIntensity(options.fogIntensity);
+    }
+    
+    // Handle noise property changes
+    if (options.noiseScale !== undefined || 
+        options.noiseIntensity !== undefined ||
+        options.noiseSpeed !== undefined ||
+        options.noiseOctaves !== undefined ||
+        options.noisePersistence !== undefined ||
+        options.noiseLacunarity !== undefined) {
+      
+      this.volumetricFog.setNoiseProperties(
+        options.noiseScale,
+        options.noiseIntensity,
+        options.noiseSpeed,
+        options.noiseOctaves,
+        options.noisePersistence,
+        options.noiseLacunarity
+      );
+    }
+    
+    // Handle ground fog specific properties
+    if (options.groundFogDensity !== undefined || 
+        options.groundFogHeight !== undefined) {
+      
+      this.volumetricFog.setGroundFogProperties(
+        options.groundFogDensity,
+        options.groundFogHeight
+      );
+    }
+    
+    console.log('[FXManager] Volumetric fog settings adjusted');
+  }
+  
+  /**
+   * Toggle volumetric ground fog on/off
+   * @param {boolean} enabled - Whether volumetric fog should be enabled
+   */
+  toggleVolumeFog(enabled) {
+    if (!this.volumetricFog) return;
+    
+    const isEnabled = this.volumetricFog.setEnabled(enabled);
+    console.log(`[FXManager] Volumetric fog ${isEnabled ? 'enabled' : 'disabled'}`);
+    return isEnabled;
+  }
+
+  /**
+   * Handle window resize for fog effect
+   */
+  onWindowResize() {
+    if (this.volumetricFog) {
+      this.volumetricFog.resize();
+    }
+  }
+
   update() {
     const delta = this.clock.getDelta();
 
-    // REMOVED: Update day/night cycle call - THIS FIXES THE ERROR
-    // this.updateDayNightCycle(delta);
+    // ADDED: Call updateFogBasedOnHeight if player exists
+    // RE-ENABLED this call, but the function body is commented out for now
+    // if (this.camera && this.camera.parent && this.camera.parent.position) {
+    //   this.updateFogBasedOnHeight(this.camera.parent.position);
+    // }
+
+    // Update volumetric fog if it exists
+    if (this.volumetricFog) {
+      try {
+        this.volumetricFog.update(delta);
+      } catch (error) {
+        console.error('[FXManager] Error updating volumetric fog:', error);
+        // Disable volumetric fog if there's an error
+        if (this.volumetricFog) {
+          this.volumetricFog.setEnabled(false);
+          this.volumetricFog = null;
+        }
+      }
+    }
 
     // Update particle systems
     Object.entries(this.particles).forEach(([id, system]) => {
@@ -385,5 +613,27 @@ export default class FXManager {
         this.updateFireflies(id, delta);
       }
     });
+  }
+
+  /**
+   * Render all effects, including volumetric fog
+   */
+  render() {
+    // Render volumetric fog effect if enabled
+    if (this.volumetricFog && this.volumetricFog.enabled) {
+      try {
+        this.volumetricFog.render();
+      } catch (error) {
+        console.error('[FXManager] Error rendering volumetric fog:', error);
+        // Fall back to regular rendering
+        this.renderer.render(this.scene, this.camera);
+        // Disable volumetric fog if there's an error
+        this.volumetricFog.setEnabled(false);
+        this.volumetricFog = null;
+      }
+    } else {
+      // Otherwise do a regular render
+      this.renderer.render(this.scene, this.camera);
+    }
   }
 }
