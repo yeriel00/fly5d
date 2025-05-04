@@ -22,6 +22,8 @@ import AppleGrowthManager from './apple-growth-manager.js';
 import { BirdSystem } from './BirdSystem.js';
 import { DeerSystem } from './DeerSystem.js'; // Import DeerSystem
 import CloudSystem from './CloudSystem.js'; // Import our new CloudSystem
+import DebugUtils from './debug_utils.js'; // ADDED: Import DebugUtils
+
 // --- Constants ---
 const R = 400; // INCREASED radius from 300 to 400 for more spacious feel
 
@@ -48,6 +50,7 @@ let birdSystem; // New bird system reference
 let deerSystem; // Moved from lower in the file to top-level scope
 let cloudSystem; // Add cloud system reference
 const clock = new THREE.Clock(); // MOVED: Initialize clock at the top level
+let debugUtils; // ADDED: Declare debugUtils variable
 
 // --- Terrain Height Function ---
 // REMOVED the basic getTerrainHeight here - we now import getFullTerrainHeight
@@ -122,15 +125,23 @@ if (!canvas) {
 }
 
 const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+// Set the pixel ratio for high-DPI displays
+renderer.setPixelRatio(window.devicePixelRatio);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87CEEB); // Sky Blue
+
+// ADDED: Instantiate DebugUtils after scene is created
+debugUtils = new DebugUtils(scene);
+window.debugUtils = debugUtils; // Make it accessible globally for console commands
 
 // --- Resize Handler ---
 function onWindowResize() {
   const w = window.innerWidth;
   const h = window.innerHeight;
+  // Update renderer size and pixel ratio
   renderer.setSize(w, h);
-  
+  renderer.setPixelRatio(window.devicePixelRatio); // Add this line
+
   // Update player camera
   if (player) {
     player.resize(w, h);
@@ -592,6 +603,10 @@ initEnvironment(scene, 'medium', worldConfig, (placerFunc, pineTreePositions) =>
   
   //  Initialize FX Manager AFTER player is created, using player's camera
   fxManager = new FXManager(scene, player.getCamera(), renderer);
+  window.fxManager = fxManager; // Make fxManager globally accessible
+  console.log('[Main] FX Manager initialized.');
+  // Pass the sphere radius to the fog setup function
+  fxManager.setupAtmosphericFog(R); // Pass sphereRadius (R) to the fog setup
   
   // Initialize player UI including weapon controls
   initializePlayerUI();
@@ -958,11 +973,20 @@ function animate(timestamp) {
   // Update FX Manager
   if (fxManager) {
     fxManager.update();
+    
+    // ADDED: Update fog density based on player position for better visibility near grass
+    if (player && player.playerObject) {
+      fxManager.updateFogBasedOnHeight(player.playerObject.position);
+    }
   }
 
-  // Render scene with player camera
-  if (player) {
-    renderer.render(scene, player.getCamera());
+  // FIXED: Use fxManager.render() instead of direct renderer call
+  // This ensures the volumetric fog is properly applied
+  if (fxManager && player) {
+    fxManager.render();
+  } else {
+    // Fallback to direct rendering if fxManager isn't available
+    renderer.render(scene, player ? player.getCamera() : camera);
   }
   
   requestAnimationFrame(animate);

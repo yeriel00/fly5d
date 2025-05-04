@@ -179,16 +179,25 @@ class CloudSystem {
         atmosphereRadius: { value: planetRadius * 1.1 },
         atmosphereColor: { value: new THREE.Color(0x4a85ff) },
         sunDirection: { value: new THREE.Vector3(1, 0.4, 0.1).normalize() },
-        glowIntensity: { value: 0.8 } // Add adjustable intensity parameter
+        glowIntensity: { value: 0.8 }, // Add adjustable intensity parameter
+        fogColor: { value: new THREE.Color(this.options.fogColor) },
+        fogDensity: { value: this.options.fogDensity }
       },
       vertexShader: `
         varying vec3 vNormal;
         varying vec3 vPosition;
+        varying float vFogDepth;
         
         void main() {
           vNormal = normalize(normalMatrix * normal);
           vPosition = (modelMatrix * vec4(position, 1.0)).xyz;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          
+          // Calculate position for fog
+          vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+          gl_Position = projectionMatrix * mvPosition;
+          
+          // Pass fog depth to fragment shader
+          vFogDepth = -mvPosition.z;
         }
       `,
       fragmentShader: `
@@ -196,9 +205,12 @@ class CloudSystem {
         uniform vec3 sunDirection;
         uniform float planetRadius;
         uniform float atmosphereRadius;
+        uniform vec3 fogColor;
+        uniform float fogDensity;
         
         varying vec3 vNormal;
         varying vec3 vPosition;
+        varying float vFogDepth;
         
         void main() {
           // Calculate view direction
@@ -218,13 +230,21 @@ class CloudSystem {
           // Set alpha for transparency
           float alpha = rim * 0.6; // Adjust for visibility
           
+          // Apply fog calculation
+          float fogFactor = exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
+          fogFactor = clamp(fogFactor, 0.0, 1.0);
+          
+          // Mix with fog color based on fog factor
+          finalColor = mix(fogColor, finalColor, fogFactor);
+          
           gl_FragColor = vec4(finalColor, alpha);
         }
       `,
       transparent: true,
       blending: THREE.AdditiveBlending,
       side: THREE.BackSide, // Only show the inside of the sphere
-      depthWrite: false
+      depthWrite: false,
+      fog: true // Enable fog support
     });
     
     // Create mesh and add to scene

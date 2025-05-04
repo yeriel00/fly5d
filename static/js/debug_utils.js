@@ -1,4 +1,3 @@
-
 import * as THREE from 'three';
 
 /**
@@ -144,6 +143,56 @@ export default class DebugUtils {
     this.createRay(position, normal, 3, 0xff00ff, lifetime);
   }
   
+  /**
+   * Visualize the approximate bounds of the ground fog.
+   * Creates a wireframe sphere representing the effective height around the world origin.
+   * @param {FXManager} fxManager - The FXManager instance containing fog settings.
+   * @param {number} worldRadius - The radius of the spherical world. Defaults to 400.
+   * @param {number} color - Color of the wireframe sphere.
+   * @returns {THREE.Mesh} The created sphere mesh.
+   */
+  visualizeFogBounds(fxManager, worldRadius = 400, color = 0xffff00) { // Added worldRadius parameter
+    if (!fxManager || !fxManager.volumetricFog || !fxManager.volumetricFog.enabled) {
+      console.warn('[DebugUtils] Volumetric fog is not available or not enabled in fxManager.');
+      return null;
+    }
+
+    const fogHeight = fxManager.volumetricFog.options.groundFogHeight;
+    if (fogHeight === undefined) {
+      console.warn('[DebugUtils] Could not retrieve groundFogHeight from fxManager.');
+      return null;
+    }
+
+    // Calculate the radius of the fog sphere
+    const fogSphereRadius = worldRadius + fogHeight;
+
+    // Create a sphere geometry instead of a box
+    const geometry = new THREE.SphereGeometry(fogSphereRadius, 32, 16); // Use SphereGeometry
+    const material = new THREE.MeshBasicMaterial({
+      color: color,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.3,
+      depthWrite: false // Make sure it doesn't obscure things behind it
+    });
+
+    const sphere = new THREE.Mesh(geometry, material); // Changed variable name from box to sphere
+    // Position the sphere at the world origin (0, 0, 0)
+    sphere.position.set(0, 0, 0); // Center the sphere
+
+    this.scene.add(sphere);
+
+    // Add to debug objects for cleanup
+    this.debugObjects.push({
+      object: sphere,
+      geometry: geometry,
+      material: material
+    });
+
+    console.log(`[DebugUtils] Visualizing fog bounds with sphere radius: ${fogSphereRadius} (World Radius: ${worldRadius}, Fog Height: ${fogHeight})`); // Updated log
+    return sphere; // Return the sphere mesh
+  }
+
   /**
    * Clear all debug objects
    */
