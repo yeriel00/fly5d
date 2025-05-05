@@ -221,8 +221,37 @@ export default class LowPolyGenerator {
       group.add(cone);
     }
     
+    // REMOVED: Point lights per tree (performance issue)
+    /*
+    const lightCount = 4;
+    const lightColor = new THREE.Color(0xffffe0); // Warm white
+    const lightIntensity = 0.8; // Relatively low intensity
+    const lightDistance = 15; // Affects nearby area
+    const lightDecay = 2;
+
+    for (let i = 0; i < lightCount; i++) {
+      const light = new THREE.PointLight(lightColor, lightIntensity, lightDistance, lightDecay);
+      
+      const heightFraction = 0.2 + Math.random() * 0.4; 
+      const angle = Math.random() * Math.PI * 2;
+      const radius = baseWidth * (1 - heightFraction * 0.8) * 0.6; 
+      
+      light.position.set(
+        Math.cos(angle) * radius,
+        trunkHeight + foliageHeight * heightFraction, 
+        Math.sin(angle) * radius
+      );
+      
+      const lightSphereGeo = new THREE.SphereGeometry(0.2, 4, 2); 
+      const lightSphereMat = new THREE.MeshBasicMaterial({ color: lightColor, wireframe: true }); 
+      const lightSphere = new THREE.Mesh(lightSphereGeo, lightSphereMat);
+      light.add(lightSphere); 
+
+      group.add(light);
+    }
+    */
+
     // IMPORTANT: Set origin of the entire tree at the bottom of the trunk
-    // This helps with proper placement on the sphere
     group.userData = {
       noCollision: false,
       isPineTree: true,

@@ -267,10 +267,10 @@ const VolumetricFogShader = {
 
 // Enhanced fog effect implementation
 class VolumetricFog {
-  constructor(renderer, scene, camera, options = {}) {
-    this.renderer = renderer;
+  constructor(scene, camera, renderer, options = {}) {
     this.scene = scene;
     this.camera = camera;
+    this.renderer = renderer;
 
     // Default options with new controls
     this.options = {
@@ -291,6 +291,7 @@ class VolumetricFog {
       groundFogHeight: 15.0, // Height of ground fog in world units
       glowIntensity: 0.3, // Intensity of the glow effect
       resolution: 1.0, // Use full resolution by default
+      sphereRadius: 400, // World sphere radius 
       ...options
     };
 
@@ -390,12 +391,15 @@ class VolumetricFog {
   
   // Initialize render targets at reduced resolution
   _initRenderTargets() {
-    const size = this.renderer.getSize(new THREE.Vector2());
+    // Create a Vector2 to store the size
+    const sizeVector = new THREE.Vector2();
+    // Use getSize with the Vector2 parameter (FIXED: This is the key fix)
+    this.renderer.getSize(sizeVector);
     const pixelRatio = this.renderer.getPixelRatio();
     
     // Scaled down resolution for better performance
-    const width = Math.floor(size.width * pixelRatio * this.options.resolution);
-    const height = Math.floor(size.height * pixelRatio * this.options.resolution);
+    const width = Math.floor(sizeVector.width * pixelRatio * this.options.resolution);
+    const height = Math.floor(sizeVector.height * pixelRatio * this.options.resolution);
     
     // Create simple render targets
     this.colorTarget = new THREE.WebGLRenderTarget(width, height, {
@@ -441,13 +445,13 @@ class VolumetricFog {
     this.fogMaterial.uniforms.cameraFar.value = this.camera.far;
     this.fogMaterial.uniforms.cameraNear.value = this.camera.near;
     
-    // FIX: Ensure camera position is properly initialized
+    // Ensure camera position is properly initialized
     if (!this.fogMaterial.uniforms.cameraPosition) {
       this.fogMaterial.uniforms.cameraPosition = { value: new THREE.Vector3() };
     }
     this.fogMaterial.uniforms.cameraPosition.value.copy(this.camera.position);
     
-    // ADDED: Assign the inverse projection matrix
+    // Make sure cameraProjectionMatrixInverse is properly initialized
     this.fogMaterial.uniforms.cameraProjectionMatrixInverse.value.copy(this.camera.projectionMatrixInverse);
 
     this.fogMaterial.uniforms.viewToWorld.value = viewToWorld;
@@ -486,10 +490,12 @@ class VolumetricFog {
   
   // Resize buffers when renderer size changes
   resize() {
-    const size = this.renderer.getSize(new THREE.Vector2());
+    // Create a new Vector2 to store the size (FIXED)
+    const sizeVector = new THREE.Vector2();
+    this.renderer.getSize(sizeVector);
     const pixelRatio = this.renderer.getPixelRatio();
-    const width = Math.floor(size.width * pixelRatio * this.options.resolution);
-    const height = Math.floor(size.height * pixelRatio * this.options.resolution);
+    const width = Math.floor(sizeVector.width * pixelRatio * this.options.resolution);
+    const height = Math.floor(sizeVector.height * pixelRatio * this.options.resolution);
     
     this.colorTarget.setSize(width, height);
     this.depthTarget.setSize(width, height);
@@ -601,6 +607,6 @@ class VolumetricFog {
     // Restore settings
     this.renderer.autoClear = oldAutoClear;
   }
-} // <<< ADDED MISSING CLOSING BRACE HERE
+}
 
 export { VolumetricFog, VolumetricFogShader };
