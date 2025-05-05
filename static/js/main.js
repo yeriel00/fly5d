@@ -23,6 +23,7 @@ import { BirdSystem } from './BirdSystem.js';
 import { DeerSystem } from './DeerSystem.js'; // Import DeerSystem
 import CloudSystem from './CloudSystem.js'; // Import our new CloudSystem
 import DebugUtils from './debug_utils.js'; // ADDED: Import DebugUtils
+import { registerLightingDebugCommands } from './LightingDebugUI.js'; // Import our lighting debug UI
 
 // --- Constants ---
 const R = 400; // INCREASED radius from 300 to 400 for more spacious feel
@@ -51,6 +52,12 @@ let deerSystem; // Moved from lower in the file to top-level scope
 let cloudSystem; // Add cloud system reference
 const clock = new THREE.Clock(); // MOVED: Initialize clock at the top level
 let debugUtils; // ADDED: Declare debugUtils variable
+
+// --- Moon Variables ---
+let moonMesh;
+let moonLight;
+const moonOrbitRadius = R * 3; // Moon orbits further out
+const moonOrbitSpeed = 0.01; // Very slow orbit speed
 
 // --- Terrain Height Function ---
 // REMOVED the basic getTerrainHeight here - we now import getFullTerrainHeight
@@ -127,6 +134,8 @@ if (!canvas) {
 const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
 // Set the pixel ratio for high-DPI displays
 renderer.setPixelRatio(window.devicePixelRatio);
+// Make sure we set the size immediately as well
+renderer.setSize(window.innerWidth, window.innerHeight);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87CEEB); // Sky Blue
 
@@ -151,10 +160,39 @@ function onWindowResize() {
 window.addEventListener('resize', onWindowResize);
 
 // --- Lighting ---
-scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-const dl = new THREE.DirectionalLight(0xffffff, 0.6);
+// Reduce existing lights to make moon the primary source
+scene.add(new THREE.AmbientLight(0xffffff, 0.1)); // Keep subtle ambient light
+const dl = new THREE.DirectionalLight(0xffffff, 0.05); // FURTHER Reduced secondary directional light intensity
 dl.position.set(5, 10, 5);
 scene.add(dl);
+
+// --- Moon Setup ---
+// Create moon geometry (low-poly sphere using standard THREE.js geometry)
+// FIX: Use THREE.SphereGeometry instead of non-existent LowPolyGenerator.createSphere
+const moonGeometry = new THREE.SphereGeometry(40, 12, 10); // INCREASED Moon size from 30 to 40
+const moonMaterial = new THREE.MeshStandardMaterial({
+    color: 0xFFFFEE, // Pale yellow
+    emissive: 0xCCCCCC, // INCREASED emissive glow slightly
+    roughness: 0.9,
+    metalness: 0.1,
+    // flatShading: true // Optional: uncomment for a more faceted look
+});
+moonMesh = new THREE.Mesh(moonGeometry, moonMaterial);
+scene.add(moonMesh);
+
+// Create moon light (directional)
+moonLight = new THREE.DirectionalLight(0xEEEEFF, 0.7); // Cool white light, moderate intensity
+moonLight.castShadow = true; // Enable shadows if needed (can be costly)
+// Configure shadow properties (optional, adjust for performance/quality)
+moonLight.shadow.mapSize.width = 1024;
+moonLight.shadow.mapSize.height = 1024;
+moonLight.shadow.camera.near = 0.5;
+moonLight.shadow.camera.far = R * 5; // Adjust far plane based on orbit radius
+
+scene.add(moonLight);
+// Make the light point towards the center of the planet
+moonLight.target.position.set(0, 0, 0);
+scene.add(moonLight.target);
 
 // --- Build World ---
 debug("Building world...");
@@ -783,6 +821,9 @@ initEnvironment(scene, 'medium', worldConfig, (placerFunc, pineTreePositions) =>
       console.log("[Main] Cloud movement speed adjusted post-initialization.");
     }
   }, cloudSystem.initializationTime + 500); // Wait for initialization + buffer
+
+  // Set up debug UI after FX manager is ready
+  setupDebugUI();
 });
 
 // Remove particle setup - commenting out
@@ -907,7 +948,8 @@ function initDeerSystem() {
 // --- Animation Loop ---
 function animate(timestamp) {
   const delta = clock.getDelta();
-  
+  const elapsedTime = clock.getElapsedTime();
+
   // Update FPS monitor at the start of each frame
   // Make sure timestamp is provided and handle any potential errors
   try {
@@ -931,6 +973,22 @@ function animate(timestamp) {
     console.warn("TWEEN library not properly loaded");
   }
   
+  // --- Moon Orbit ---
+  if (moonMesh && moonLight) {
+    // Calculate moon position using a tilted orbit
+    const angle = elapsedTime * moonOrbitSpeed;
+    const orbitAxis = new THREE.Vector3(0.1, 1, 0).normalize(); // Slightly tilted orbit axis
+    const moonPosition = new THREE.Vector3(moonOrbitRadius, 0, 0)
+        .applyAxisAngle(orbitAxis, angle);
+
+    moonMesh.position.copy(moonPosition);
+
+    // Update light position to follow the moon
+    moonLight.position.copy(moonPosition);
+    // Ensure light continues to target the center
+    moonLight.target.updateMatrixWorld(); // Important for directional light targeting
+  }
+
   // Update player
   if (player) {
     player.update(delta);
@@ -2695,4 +2753,20 @@ function setupCloudControls() {
 
 // Call this function after setupDebugCommands() is called
 setupCloudControls();
+
+// After world building is complete and FXManager is initialized, set up debug UI
+function setupDebugUI() {
+  if (!debugUtils || !fxManager) return;
+  
+  // Register lighting debug commands
+  const lightingDebugUI = registerLightingDebugCommands(debugUtils.commandRegistry, fxManager, debugUtils);
+  
+  // Add a global command to toggle lighting debug panel
+  window.toggleLightingDebug = () => {
+    lightingDebugUI.toggle();
+    return 'Lighting debug panel toggled';
+  };
+  
+  console.log('[Main] Lighting debug UI initialized');
+}
 

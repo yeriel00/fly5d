@@ -1,638 +1,514 @@
 import * as THREE from 'three';
 import { VolumetricFog } from './shaders/VolumetricFogShader.js';
- 
+
 /**
- * Manages visual effects for the spherical world
+ * FX Manager class to manage visual effects in the scene
  */
 export default class FXManager {
+  /**
+   * Create a new FX Manager
+   * @param {THREE.Scene} scene - The Three.js scene
+   * @param {THREE.Camera} camera - The camera
+   * @param {THREE.WebGLRenderer} renderer - The renderer
+   */
   constructor(scene, camera, renderer) {
     this.scene = scene;
     this.camera = camera;
     this.renderer = renderer;
-
-    // Initialize effects containers
-    this.particles = {};
-    this.lights = {}; // Keep lights object, but setupSky will be removed
-    this.timeOfDay = 0; // 0-1 represents time of day cycle
-
-    // Clock for time-based effects
-    this.clock = new THREE.Clock();
-
-    // Setup renderer for better visual quality
-    this.setupRenderer();
-
-    // REMOVED: Setup sky and lighting call
-    // this.setupSky();
-
-    // Add atmospheric fog
-    this.setupAtmosphericFog();
-
-    // ADDED: Basic lighting setup here since setupSky is removed
-    this._setupBasicLighting();
     
-    // ADDED: Initialize the volumetric ground fog effect
-    this.setupGroundFog();
+    // Store sphere radius with default of 400
+    this.sphereRadius = 400;
     
-    // ADDED: Ensure fog is applied to all materials including MeshBasicMaterial
-    this.enableFogForAllMaterials();
+    // Track all lights
+    this.lights = {
+      ambientLight: null,
+      moonLight: null,
+      pointLights: [],
+      spotLights: []
+    };
+    
+    // Find existing scene lights
+    this._findExistingLights();
+    
+    // Initialize particle systems
+    this.particleSystems = [];
+    
+    // Initialize other effects
+    this.volumetricFog = null;
+    this.fog = null;
+    this.fogSettings = {
+      originalColor: new THREE.Color(0x87CEEB),
+      originalDensity: 0.00025
+    };
+    
+    // Debug mode
+    this.debug = false;
+    
+    // Log initialization
+    console.log('[FXManager] Initialized');
   }
-
-  setupRenderer() {
-    // Enable shadow casting
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    
-    // FIXED: Replace deprecated properties with current ones
-    // this.renderer.outputEncoding = THREE.sRGBEncoding;
-    this.renderer.outputColorSpace = THREE.SRGBColorSpace; // Updated property
-    
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.2;
-    
-    // FIXED: Replace physicallyCorrectLights with useLegacyLights (inverse logic)
-    // this.renderer.physicallyCorrectLights = true;
-    this.renderer.useLegacyLights = false; // false = physically correct
-  }
-
-  // REMOVED: setupSky() method entirely
-  /*
-  setupSky() {
-    // ... removed hemisphere light, directional light, and createStars call ...
-  }
-  */
-
-  // ADDED: Basic lighting setup (can be expanded later)
-  _setupBasicLighting() {
-    // MOON THEME: Cooler and dimmer ambient light
-    const ambientLight = new THREE.AmbientLight(0x404060, 0.2); // Cool blue-grey, low intensity
-    this.scene.add(ambientLight);
-    this.lights.ambientLight = ambientLight;
-
-    // MOON THEME: Directional light as moonlight
-    const moonLight = new THREE.DirectionalLight(0xadc1de, 0.6); // Pale blue, moderate intensity
-    moonLight.position.set(-500, 500, -500); // Position simulating moonlight angle
-    moonLight.castShadow = true;
-    // Adjust shadow parameters for softer moonlight shadows
-    moonLight.shadow.camera.top = 150; // Increase area slightly
-    moonLight.shadow.camera.bottom = -150;
-    moonLight.shadow.camera.left = -150;
-    moonLight.shadow.camera.right = 150;
-    moonLight.shadow.mapSize.width = 1024; // Lower resolution for softer shadows
-    moonLight.shadow.mapSize.height = 1024;
-    moonLight.shadow.bias = -0.001; // Adjust bias if needed
-
-    this.scene.add(moonLight);
-    this.lights.moonLight = moonLight; // Renamed from dirLight
-    console.log('[FXManager] Moonlit lighting setup complete.');
-  }
-
+  
   /**
-   * Setup atmospheric fog for the scene
-   * @param {number} sphereRadius - Radius of the sphere world (affects fog density)
+   * Find existing lights in the scene
    * @private
    */
-  setupAtmosphericFog(sphereRadius = 400) {
-    // Get sphere radius from parameter or use default
-    const radius = sphereRadius || 400;
+  _findExistingLights() {
+    this.scene.traverse(object => {
+      if (object.isLight) {
+        if (object.isAmbientLight) {
+          this.lights.ambientLight = object;
+        } else if (object.isDirectionalLight) {
+          // Assume the first directional light is the moon light
+          if (!this.lights.moonLight) {
+            this.lights.moonLight = object;
+          }
+        } else if (object.isPointLight) {
+          this.lights.pointLights.push(object);
+        } else if (object.isSpotLight) {
+          this.lights.spotLights.push(object);
+        }
+      }
+    });
     
-    // ADJUSTED: Simplified density calculation for more predictable results
-    const baseDensity = 0.0015; // Slightly increased base density
-    const fogDensity = baseDensity; // Use base density directly for now
-    
-    // ENHANCED: More noticeable fog color with slight blue tint
-    const fogColor = new THREE.Color(0x667788); // Adjusted color slightly
-    
-    // Use exponential fog with adjusted density for more noticeable effect
-    this.fog = new THREE.FogExp2(fogColor, fogDensity);
-    this.scene.fog = this.fog;
-    
-    // Store the original density for toggling/adjusting later
-    this.fogSettings = {
-      originalDensity: fogDensity,
-      radius: radius,
-      grassLevel: 6 // Match grass height from worldConfig
-    };
-    
-    console.log(`Atmospheric fog initialized with density (${fogDensity})`); // Updated log
-    return this.fog;
+    // Log found lights
+    console.log(`[FXManager] Found ${this.lights.pointLights.length} point lights and ${this.lights.spotLights.length} spot lights`);
+    console.log('[FXManager] Moon light:', this.lights.moonLight ? 'found' : 'not found');
+    console.log('[FXManager] Ambient light:', this.lights.ambientLight ? 'found' : 'not found');
   }
 
   /**
-   * Initialize the volumetric ground fog effect
-   * This creates realistic fog that emanates from the ground surface
-   * @param {Object} options - Customization options for the fog
+   * Add a new light to the scene
+   * @param {string} type - Light type: 'ambient', 'directional', 'point', 'spot' 
+   * @param {Object} options - Light options
+   * @returns {Object} Created light with ID
    */
-  setupGroundFog(options = {}) {
-    const fogOptions = {
-      // Visual style
-      fogColor: new THREE.Color(0x8bb0ff), // Main fog color 
-      fogColorBottom: new THREE.Color(0xefd1b5), // Ground level fog color
-      
-      // Fog density settings
-      fogDensity: 0.00015, // Slightly reduced base density
-      fogIntensity: 25.0, // Slightly reduced intensity (was 28.0)
-      groundFogDensity: 2.0, // Slightly reduced ground density (was 2.2)
-      groundFogHeight: 15.0, // Increased height slightly
-      
-      // Fog movement and noise
-      noiseScale: 0.007, // Adjusted noise scale
-      noiseIntensity: 0.30, // Adjusted noise intensity
-      noiseSpeed: 0.03, // Speed of fog movement
-      
-      // Performance settings
-      resolution: 1.0, // INCREASED: Render fog at full resolution for max quality
-      ...options
-    };
+  addLight(type, options = {}) {
+    let light;
+    const id = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
     
-    try {
-      console.log('[FXManager] Setting up volumetric ground fog effect...');
+    switch (type) {
+      case 'ambient':
+        light = new THREE.AmbientLight(
+          options.color || 0xffffff,
+          options.intensity || 0.5
+        );
+        this.lights.ambientLight = light;
+        break;
       
-      // Initialize the volumetric fog post-processing effect
-      this.volumetricFog = new VolumetricFog(
-        this.renderer, 
-        this.scene,
-        this.camera, 
-        fogOptions
-      );
+      case 'directional':
+        light = new THREE.DirectionalLight(
+          options.color || 0xffffff,
+          options.intensity || 1.0
+        );
+        if (options.position) light.position.copy(options.position);
+        if (options.castShadow !== undefined) light.castShadow = options.castShadow;
+        
+        // If replacing moon light
+        if (options.isMoonLight) {
+          this.lights.moonLight = light;
+        }
+        break;
       
-      // Enable the fog effect
-      this.volumetricFog.setEnabled(true);
+      case 'point':
+        light = new THREE.PointLight(
+          options.color || 0xffffff,
+          options.intensity || 1.0,
+          options.distance || 0,
+          options.decay || 1
+        );
+        if (options.position) light.position.copy(options.position);
+        if (options.castShadow !== undefined) light.castShadow = options.castShadow;
+        this.lights.pointLights.push(light);
+        break;
       
-      console.log('[FXManager] Volumetric ground fog initialized successfully');
-    } catch (error) {
-      console.error('[FXManager] Failed to initialize volumetric fog:', error);
-      this.volumetricFog = null;
+      case 'spot':
+        light = new THREE.SpotLight(
+          options.color || 0xffffff,
+          options.intensity || 1.0,
+          options.distance || 0,
+          options.angle || Math.PI/3,
+          options.penumbra || 0,
+          options.decay || 1
+        );
+        if (options.position) light.position.copy(options.position);
+        if (options.castShadow !== undefined) light.castShadow = options.castShadow;
+        this.lights.spotLights.push(light);
+        break;
+        
+      default:
+        console.warn(`[FXManager] Unknown light type: ${type}`);
+        return null;
     }
     
-    return this.volumetricFog;
-  }
-
-  /**
-   * Update fog based on player position/height
-   * This creates a more atmospheric effect where fog is more
-   * visible near grass level
-   * @param {THREE.Vector3} playerPosition - Current player position
-   */
-  updateFogBasedOnHeight(playerPosition) {
-    // DISABLED this dynamic adjustment for now to simplify fog behavior
-    /*
-    if (!this.fog || !this.fogSettings) return;
+    // Store ID in user data
+    light.userData = {
+      ...light.userData,
+      fxManagerId: id
+    };
     
-    // Calculate height relative to sphere surface
-    const distanceFromCenter = playerPosition.length();
-    const heightAboveSurface = Math.max(0, distanceFromCenter - this.fogSettings.radius);
-    
-    // IMPROVED: Use adjusted base density
-    const baseFogDensity = this.fogSettings.originalDensity; // Use the original density set in setup
-    
-    // Calculate a multiplier that makes fog more visible closer to the camera
-    // ADJUSTED: Kept reduced multiplier effect
-    const heightMultiplier = 1.0; // Set to 1.0 to disable dynamic changes
-    
-    // Apply the adjusted density - higher overall than previous version
-    this.fog.density = baseFogDensity * heightMultiplier;
-    
-    // Enhance the color adjustment to be more visible
-    const baseColor = new THREE.Color(0x667788); // Use the base fog color set in setup
-    const groundFogColor = new THREE.Color(0x708090); // Slightly adjusted ground fog target color
-    const blendFactor = Math.max(0, Math.min(1, 1 - heightAboveSurface / 25));
-    
-    // Apply stronger color transition
-    this.fog.color.copy(baseColor).lerp(groundFogColor, blendFactor * 0.4); // Reduced lerp factor
-    */
-  }
-
-  createParticleTexture() {
-    const canvas = document.createElement('canvas');
-    canvas.width = 64;
-    canvas.height = 64;
-    
-    const context = canvas.getContext('2d');
-    const gradient = context.createRadialGradient(
-      32, 32, 0, 32, 32, 32
-    );
-    
-    gradient.addColorStop(0, 'rgba(255,255,255,1)');
-    gradient.addColorStop(0.3, 'rgba(200,200,255,0.8)');
-    gradient.addColorStop(0.7, 'rgba(120,120,255,0.4)');
-    gradient.addColorStop(1, 'rgba(0,0,64,0)');
-    
-    context.fillStyle = gradient;
-    context.fillRect(0, 0, 64, 64);
-    
-    const texture = new THREE.CanvasTexture(canvas);
-    return texture;
+    this.scene.add(light);
+    return { light, id };
   }
   
-  createWaterfall(position, normal, width=2, height=8, count=500) {
-    // Create particle system for waterfall
-    const geometry = new THREE.BufferGeometry();
-    const positions = [];
-    const velocities = [];
-    const lifetimes = [];
+  /**
+   * Remove a light by ID
+   * @param {string} id - Light ID
+   * @returns {boolean} Whether the light was found and removed
+   */
+  removeLight(id) {
+    let found = false;
     
-    // Set up initial particle distribution
-    for (let i = 0; i < count; i++) {
-      // Random position across width of waterfall at top
-      const x = (Math.random() - 0.5) * width;
-      const y = Math.random() * 0.5; // Small random height offset at top
-      const z = (Math.random() - 0.5) * (width / 2);
+    // Check all light arrays
+    ['pointLights', 'spotLights'].forEach(arrayName => {
+      const array = this.lights[arrayName];
+      const index = array.findIndex(light => 
+        light.userData && light.userData.fxManagerId === id);
       
-      positions.push(x, y, z);
-      
-      // Initial velocity
-      const vx = (Math.random() - 0.5) * 0.05;
-      const vy = -Math.random() * 0.2 - 0.1; // Down
-      const vz = (Math.random() - 0.5) * 0.05;
-      
-      velocities.push(vx, vy, vz);
-      
-      // Random lifetimes so particles don't all reset at once
-      lifetimes.push(Math.random());
-    }
+      if (index !== -1) {
+        const light = array[index];
+        this.scene.remove(light);
+        array.splice(index, 1);
+        found = true;
+      }
+    });
     
-    // Create attributes
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geometry.setAttribute('velocity', new THREE.Float32BufferAttribute(velocities, 3));
-    geometry.setAttribute('lifetime', new THREE.Float32BufferAttribute(lifetimes, 1));
+    // Check special lights
+    ['ambientLight', 'moonLight'].forEach(lightName => {
+      const light = this.lights[lightName];
+      if (light && light.userData && light.userData.fxManagerId === id) {
+        this.scene.remove(light);
+        this.lights[lightName] = null;
+        found = true;
+      }
+    });
+    
+    return found;
+  }
+  
+  /**
+   * Create an explosion effect at a position
+   * @param {THREE.Vector3} position - Position of explosion
+   * @param {number} [size=1.0] - Size of explosion
+   * @param {number} [color=0xff5500] - Color of explosion
+   * @param {number} [particleCount=20] - Number of particles
+   */
+  createExplosion(position, size = 1.0, color = 0xff5500, particleCount = 20) {
+    // Create particle geometry
+    const particles = new THREE.Object3D();
     
     // Create particle material
-    const material = new THREE.PointsMaterial({
-      color: 0x3399ff,
-      size: 0.2,
+    const material = new THREE.MeshBasicMaterial({
+      color: color,
       transparent: true,
-      opacity: 0.8,
-      map: this.createParticleTexture(),
-      blending: THREE.AdditiveBlending,
-      depthWrite: false
+      opacity: 1.0
     });
     
-    // Create points system
-    const points = new THREE.Points(geometry, material);
-    
-    // Create a container to position and orient the waterfall
-    const container = new THREE.Object3D();
-    container.add(points);
-    
-    // Position and orient
-    container.position.copy(position);
-    container.lookAt(position.clone().add(normal));
+    // Create particles
+    for (let i = 0; i < particleCount; i++) {
+      const geometry = new THREE.SphereGeometry(
+        size * (0.1 + Math.random() * 0.3), // Radius
+        4, // Width segments
+        4  // Height segments
+      );
+      
+      const mesh = new THREE.Mesh(geometry, material);
+      
+      // Random direction
+      const direction = new THREE.Vector3(
+        Math.random() * 2 - 1,
+        Math.random() * 2 - 1,
+        Math.random() * 2 - 1
+      ).normalize();
+      
+      // Random speed
+      const speed = 0.1 + Math.random() * 0.2;
+      
+      // Set initial position
+      mesh.position.copy(position);
+      
+      // Store velocity information
+      mesh.userData = {
+        velocity: direction.multiplyScalar(speed),
+        lifespan: 0.5 + Math.random() * 0.5, // 0.5 to 1.0 seconds
+        age: 0
+      };
+      
+      particles.add(mesh);
+    }
     
     // Add to scene
-    this.scene.add(container);
+    this.scene.add(particles);
     
-    // Store for updates
-    const id = `waterfall_${Date.now()}`;
-    this.particles[id] = {
-      type: 'waterfall',
-      object: container,
-      points: points,
-      origin: position.clone(),
-      normal: normal.clone(),
-      width: width,
-      height: height,
-      maxLifetime: height / 0.15 // Approx time to fall complete height
-    };
-    
-    return id;
-  }
-  
-  createFireflies(position, radius=10, count=50) {
-    const geometry = new THREE.BufferGeometry();
-    const positions = [];
-    
-    for (let i = 0; i < count; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const r = Math.random() * radius;
-      const height = Math.random() * radius * 0.5;
-      
-      const x = Math.cos(angle) * r;
-      const y = height;
-      const z = Math.sin(angle) * r;
-      
-      positions.push(x, y, z);
-    }
-    
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    
-    const material = new THREE.PointsMaterial({
-      color: 0xffff80,
-      size: 0.5,
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      map: this.createParticleTexture(),
-      depthWrite: false
+    // Add to particle systems
+    this.particleSystems.push({
+      particles,
+      update: (delta) => this._updateExplosion(particles, delta)
     });
     
-    const points = new THREE.Points(geometry, material);
-    points.position.copy(position);
+    // Create point light for the explosion
+    const light = new THREE.PointLight(color, 1.0, size * 10);
+    light.position.copy(position);
+    this.scene.add(light);
     
-    this.scene.add(points);
-    
-    const id = `fireflies_${Date.now()}`;
-    this.particles[id] = {
-      type: 'fireflies',
-      object: points,
-      origin: position.clone(),
-      radius: radius,
-      count: count,
-      time: 0
-    };
-    
-    return id;
+    // Fade out and remove the light
+    setTimeout(() => {
+      this.scene.remove(light);
+    }, 100);
   }
   
-  // REMOVED: updateDayNightCycle(delta) method entirely
-  /*
-  updateDayNightCycle(delta) {
-    // ... removed day/night logic ...
-  }
-  */
-
-  updateWaterfall(id, delta) {
-    const waterfall = this.particles[id];
-    if (!waterfall || waterfall.type !== 'waterfall') return;
+  /**
+   * Update explosion particles
+   * @param {THREE.Object3D} particles - Particle container
+   * @param {number} delta - Time delta
+   * @private
+   */
+  _updateExplosion(particles, delta) {
+    let alive = false;
     
-    const points = waterfall.points;
-    const positions = points.geometry.attributes.position.array;
-    const velocities = points.geometry.attributes.velocity.array;
-    const lifetimes = points.geometry.attributes.lifetime.array;
-    
-    for (let i = 0; i < positions.length; i += 3) {
-      // Update position based on velocity
-      positions[i] += velocities[i] * delta * 60;
-      positions[i+1] += velocities[i+1] * delta * 60;
-      positions[i+2] += velocities[i+2] * delta * 60;
+    // Update each particle
+    particles.children.forEach(particle => {
+      particle.userData.age += delta;
       
-      // Update lifetime
-      const idx = i/3;
-      lifetimes[idx] += delta / waterfall.maxLifetime;
-      
-      // Reset particle if it exceeds lifetime or falls too far
-      if (lifetimes[idx] >= 1 || positions[i+1] < -waterfall.height) {
-        // Reset position to top
-        positions[i] = (Math.random() - 0.5) * waterfall.width;
-        positions[i+1] = Math.random() * 0.5; // Small random height at top
-        positions[i+2] = (Math.random() - 0.5) * (waterfall.width / 2);
+      // Check if particle is still alive
+      if (particle.userData.age < particle.userData.lifespan) {
+        // Update position
+        particle.position.add(
+          particle.userData.velocity.clone().multiplyScalar(delta * 60)
+        );
         
-        // Reset velocity
-        velocities[i] = (Math.random() - 0.5) * 0.05;
-        velocities[i+1] = -Math.random() * 0.2 - 0.1;
-        velocities[i+2] = (Math.random() - 0.5) * 0.05;
+        // Fade out
+        const lifeRatio = particle.userData.age / particle.userData.lifespan;
+        particle.material.opacity = 1.0 - lifeRatio;
         
-        // Reset lifetime
-        lifetimes[idx] = 0;
+        // Shrink
+        const scale = 1.0 - lifeRatio * 0.5;
+        particle.scale.set(scale, scale, scale);
+        
+        alive = true;
       } else {
-        // Add some gravity
-        velocities[i+1] -= 0.01 * delta;
-      }
-    }
-    
-    // Update THREE.js buffers
-    points.geometry.attributes.position.needsUpdate = true;
-  }
-  
-  updateFireflies(id, delta) {
-    const fireflies = this.particles[id];
-    if (!fireflies || fireflies.type !== 'fireflies') return;
-    
-    fireflies.time += delta;
-    
-    const positions = fireflies.object.geometry.attributes.position.array;
-    
-    for (let i = 0; i < positions.length; i += 3) {
-      // Calculate unique animated movement for each firefly
-      const idx = i/3;
-      const offsetX = Math.sin(fireflies.time + idx * 0.5) * 0.3;
-      const offsetY = Math.cos(fireflies.time * 0.7 + idx * 0.3) * 0.2;
-      const offsetZ = Math.sin(fireflies.time * 0.5 + idx * 0.2) * 0.3;
-      
-      // Update positions with gentle bobbing motion
-      const originalX = Math.cos(idx * 7.1) * fireflies.radius * (0.2 + Math.random() * 0.8);
-      const originalY = (Math.random() * 0.5 + 0.2) * fireflies.radius * 0.5;
-      const originalZ = Math.sin(idx * 7.1) * fireflies.radius * (0.2 + Math.random() * 0.8);
-      
-      positions[i] = originalX + offsetX;
-      positions[i+1] = originalY + offsetY;
-      positions[i+2] = originalZ + offsetZ;
-    }
-    
-    // Pulse the glow
-    const s = (Math.sin(fireflies.time * 2) * 0.1 + 0.9);
-    fireflies.object.material.size = 0.5 * s;
-    
-    // Update the buffer
-    fireflies.object.geometry.attributes.position.needsUpdate = true;
-  }
-
-  /**
-   * Ensures fog is enabled for all materials in the scene
-   * This is needed because some materials like MeshBasicMaterial don't have fog enabled by default
-   */
-  enableFogForAllMaterials() {
-    this.scene.traverse(object => {
-      if (object.isMesh && object.material) {
-        // Handle both individual materials and material arrays
-        if (Array.isArray(object.material)) {
-          object.material.forEach(material => {
-            material.fog = true;
-          });
-        } else {
-          object.material.fog = true;
-        }
+        // Remove dead particles
+        particle.visible = false;
       }
     });
-
-    // Add a hook to make sure all future materials will also have fog enabled
-    const originalAdd = this.scene.add;
-    this.scene.add = function(...objects) {
-      objects.forEach(object => {
-        if (object) {
-          // Apply fog to the object and all of its descendants
-          object.traverse(child => {
-            if (child.isMesh && child.material) {
-              if (Array.isArray(child.material)) {
-                child.material.forEach(material => {
-                  material.fog = true;
-                });
-              } else {
-                child.material.fog = true;
-              }
-            }
-          });
-        }
-      });
-      return originalAdd.call(this, ...objects);
+    
+    return alive;
+  }
+  
+  /**
+   * Setup atmospheric fog
+   * @param {number} [sphereRadius=400] - Planet sphere radius 
+   */
+  setupAtmosphericFog(sphereRadius = 400) {
+    // Store the sphere radius
+    this.sphereRadius = sphereRadius;
+    
+    // Calculate fog density based on sphere size
+    const scaledDensity = 0.00025 * (400 / sphereRadius);
+    
+    // Create exponential fog
+    this.fog = new THREE.FogExp2(0x87CEEB, scaledDensity);
+    
+    // Store original values for reset
+    this.fogSettings = {
+      originalColor: this.fog.color.clone(),
+      originalDensity: this.fog.density
     };
     
-    console.log("[FXManager] Fog enabled for all materials in scene");
+    // Add to scene
+    this.scene.fog = this.fog;
+    
+    console.log(`[FXManager] Atmospheric fog setup complete (density: ${scaledDensity})`);
   }
-
+  
   /**
-   * Set fog density
-   * @param {number} density - New fog density (0-0.001 is a good range)
+   * Setup ground fog effect
+   * @param {number} [sphereRadius=400] - Planet sphere radius
    */
-  setFogDensity(density) {
-    if (!this.fog) return;
-    this.fog.density = density;
-    console.log(`Atmospheric fog density updated to: ${density}`);
+  setupGroundFog(sphereRadius = 400) {
+    // Store the sphere radius
+    this.sphereRadius = sphereRadius;
+    
+    console.log(`[XManager] Moonlit lighting setup complete (scaled to sphere radius: ${sphereRadius})`);
+    
+    // Initialize volumetric fog if not already created
+    if (!this.volumetricFog) {
+      try {
+        // Store default settings for reset
+        this.volumetricFogDefaults = {
+          fogColor: new THREE.Color(0x88aaff),
+          fogColorBottom: new THREE.Color(0xffffff),
+          fogDensity: 0.00002,
+          groundFogHeight: 20,
+          groundFogDensity: 3,
+          fogNoiseScale: 0.002,
+          fogNoiseSpeed: 0.04,
+          fogIntensity: 30
+        };
+        
+        // Create volumetric fog with properly sized parameters
+        this.volumetricFog = new VolumetricFog(
+          this.scene, 
+          this.camera, 
+          this.renderer, 
+          {
+            ...this.volumetricFogDefaults,
+            sphereRadius: sphereRadius
+          }
+        );
+        
+        console.log('[FXManager] Volumetric fog initialized');
+      } catch (error) {
+        console.error('[FXManager] Error initializing volumetric fog:', error);
+      }
+    }
   }
-
+  
   /**
-   * Set fog color
-   * @param {THREE.Color|number} color - New fog color
+   * Toggle volumetric fog on/off
+   * @param {boolean} enabled - Whether to enable fog
    */
-  setFogColor(color) {
-    if (!this.fog) return;
-    const newColor = color instanceof THREE.Color ? color : new THREE.Color(color);
-    this.fog.color.copy(newColor);
-    console.log(`Atmospheric fog color updated to:`, newColor);
-  }
-
-  /**
-   * Toggle atmospheric fog on/off
-   * @param {boolean} enabled - Whether fog should be enabled
-   */
-  toggleFog(enabled) {
-    if (enabled) {
-      // Re-enable fog if it was disabled
-      this.scene.fog = this.fog;
-      console.log('Atmospheric fog enabled');
+  toggleVolumeFog(enabled) {
+    if (this.volumetricFog) {
+      this.volumetricFog.enabled = enabled;
+      console.log(`[FXManager] Volumetric fog ${enabled ? 'enabled' : 'disabled'}`);
     } else {
-      // Disable fog by removing it from the scene
-      this.scene.fog = null;
-      console.log('Atmospheric fog disabled');
+      console.warn('[FXManager] Volumetric fog not initialized');
     }
   }
   
   /**
    * Adjust volumetric fog settings
-   * @param {Object} options - New fog parameters to apply
+   * @param {Object} settings - Fog settings to change
    */
-  adjustFogSettings(options = {}) {
-    if (!this.volumetricFog) return;
-    
-    // Handle color changes
-    if (options.fogColor || options.fogColorBottom) {
-      this.volumetricFog.setColors(
-        options.fogColor || undefined,
-        options.fogColorBottom || undefined
-      );
+  adjustFogSettings(settings) {
+    if (this.volumetricFog) {
+      // Apply new settings
+      Object.assign(this.volumetricFog.options, settings);
+      console.log('[FXManager] Volumetric fog settings updated');
+    } else {
+      console.warn('[FXManager] Volumetric fog not initialized');
     }
-    
-    // Handle density changes
-    if (options.fogDensity !== undefined) {
-      this.volumetricFog.setDensity(options.fogDensity);
-    }
-    
-    // Handle intensity changes
-    if (options.fogIntensity !== undefined) {
-      this.volumetricFog.setIntensity(options.fogIntensity);
-    }
-    
-    // Handle noise property changes
-    if (options.noiseScale !== undefined || 
-        options.noiseIntensity !== undefined ||
-        options.noiseSpeed !== undefined ||
-        options.noiseOctaves !== undefined ||
-        options.noisePersistence !== undefined ||
-        options.noiseLacunarity !== undefined) {
-      
-      this.volumetricFog.setNoiseProperties(
-        options.noiseScale,
-        options.noiseIntensity,
-        options.noiseSpeed,
-        options.noiseOctaves,
-        options.noisePersistence,
-        options.noiseLacunarity
-      );
-    }
-    
-    // Handle ground fog specific properties
-    if (options.groundFogDensity !== undefined || 
-        options.groundFogHeight !== undefined) {
-      
-      this.volumetricFog.setGroundFogProperties(
-        options.groundFogDensity,
-        options.groundFogHeight
-      );
-    }
-    
-    console.log('[FXManager] Volumetric fog settings adjusted');
   }
   
   /**
-   * Toggle volumetric ground fog on/off
-   * @param {boolean} enabled - Whether volumetric fog should be enabled
+   * Toggle atmospheric fog on/off
+   * @param {boolean} enabled - Whether to enable fog
    */
-  toggleVolumeFog(enabled) {
+  toggleFog(enabled) {
+    if (enabled) {
+      if (!this.fog) {
+        this.setupAtmosphericFog(this.sphereRadius);
+      }
+      this.scene.fog = this.fog;
+    } else {
+      this.scene.fog = null;
+    }
+    
+    console.log(`[FXManager] Atmospheric fog ${enabled ? 'enabled' : 'disabled'}`);
+  }
+  
+  /**
+   * Set fog color
+   * @param {THREE.Color|number|string} color - New fog color
+   */
+  setFogColor(color) {
+    if (this.scene.fog) {
+      this.scene.fog.color.set(color);
+    } else if (this.fog) {
+      this.fog.color.set(color);
+    }
+  }
+  
+  /**
+   * Set fog density
+   * @param {number} density - New fog density
+   */
+  setFogDensity(density) {
+    if (this.scene.fog && this.scene.fog.density !== undefined) {
+      this.scene.fog.density = density;
+    } else if (this.fog && this.fog.density !== undefined) {
+      this.fog.density = density;
+    }
+  }
+  
+  /**
+   * Reset lighting to defaults
+   */
+  resetLighting() {
+    // Reset ambient light
+    if (this.lights.ambientLight) {
+      this.lights.ambientLight.color.set(0xffffff);
+      this.lights.ambientLight.intensity = 0.5;
+    }
+    
+    // Reset directional (moon) light
+    if (this.lights.moonLight) {
+      this.lights.moonLight.color.set(0xffffff);
+      this.lights.moonLight.intensity = 0.7;
+    }
+    
+    console.log('[FXManager] Lighting reset to defaults');
+  }
+  
+  /**
+   * Update fog based on player height
+   * @param {THREE.Vector3} playerPosition - Player position
+   */
+  updateFogBasedOnHeight(playerPosition) {
     if (!this.volumetricFog) return;
     
-    const isEnabled = this.volumetricFog.setEnabled(enabled);
-    console.log(`[FXManager] Volumetric fog ${isEnabled ? 'enabled' : 'disabled'}`);
-    return isEnabled;
+    // Get height above terrain (use radius as approximation)
+    const height = playerPosition.length() - this.sphereRadius;
+    
+    // Adjust fog settings based on height
+    const fogHeight = Math.max(1, this.volumetricFog.options.groundFogHeight);
+    const heightRatio = Math.min(1, height / fogHeight);
+    
+    // Reduce fog density when player is inside it
+    if (heightRatio < 0.5) {
+      // Make fog density dependent on height when inside the fog
+      const insideFactor = heightRatio * 2; // 0 at ground, 1 at mid-height
+      const adjustedDensity = this.volumetricFogDefaults.groundFogDensity * (0.3 + insideFactor * 0.7);
+      
+      this.volumetricFog.options.groundFogDensity = adjustedDensity;
+    } else {
+      // Reset to normal density when outside the fog
+      this.volumetricFog.options.groundFogDensity = this.volumetricFogDefaults.groundFogDensity;
+    }
   }
-
+  
   /**
-   * Handle window resize for fog effect
+   * Update all effects
+   * @param {number} delta - Time delta
    */
-  onWindowResize() {
-    if (this.volumetricFog) {
-      this.volumetricFog.resize();
-    }
-  }
-
-  update() {
-    const delta = this.clock.getDelta();
-
-    // ADDED: Call updateFogBasedOnHeight if player exists
-    // RE-ENABLED this call, but the function body is commented out for now
-    // if (this.camera && this.camera.parent && this.camera.parent.position) {
-    //   this.updateFogBasedOnHeight(this.camera.parent.position);
-    // }
-
-    // Update volumetric fog if it exists
-    if (this.volumetricFog) {
-      try {
-        this.volumetricFog.update(delta);
-      } catch (error) {
-        console.error('[FXManager] Error updating volumetric fog:', error);
-        // Disable volumetric fog if there's an error
-        if (this.volumetricFog) {
-          this.volumetricFog.setEnabled(false);
-          this.volumetricFog = null;
-        }
-      }
-    }
-
+  update(delta) {
     // Update particle systems
-    Object.entries(this.particles).forEach(([id, system]) => {
-      if (system.type === 'waterfall') {
-        this.updateWaterfall(id, delta);
-      } else if (system.type === 'fireflies') {
-        this.updateFireflies(id, delta);
+    for (let i = this.particleSystems.length - 1; i >= 0; i--) {
+      const system = this.particleSystems[i];
+      const alive = system.update(delta);
+      
+      if (!alive) {
+        // Remove dead system
+        this.scene.remove(system.particles);
+        this.particleSystems.splice(i, 1);
       }
-    });
+    }
+    
+    // Update volumetric fog
+    if (this.volumetricFog) {
+      this.volumetricFog.update(delta);
+    }
   }
-
+  
   /**
-   * Render all effects, including volumetric fog
+   * Render the scene with effects
    */
   render() {
-    // Render volumetric fog effect if enabled
+    // Render with volumetric fog if available
     if (this.volumetricFog && this.volumetricFog.enabled) {
-      try {
-        this.volumetricFog.render();
-      } catch (error) {
-        console.error('[FXManager] Error rendering volumetric fog:', error);
-        // Fall back to regular rendering
-        this.renderer.render(this.scene, this.camera);
-        // Disable volumetric fog if there's an error
-        this.volumetricFog.setEnabled(false);
-        this.volumetricFog = null;
-      }
+      this.volumetricFog.render();
     } else {
-      // Otherwise do a regular render
+      // Standard rendering
       this.renderer.render(this.scene, this.camera);
     }
   }
