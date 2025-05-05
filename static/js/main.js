@@ -56,7 +56,7 @@ let debugUtils; // ADDED: Declare debugUtils variable
 // --- Moon Variables ---
 let moonMesh;
 let moonLight;
-const moonOrbitRadius = R * 3; // Moon orbits further out
+const moonOrbitRadius = R * 8; // Increased radius (from R * 3 to R * 8) to place moon much farther away
 const moonOrbitSpeed = 0.01; // Very slow orbit speed
 
 // --- Terrain Height Function ---
