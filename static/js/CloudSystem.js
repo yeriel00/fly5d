@@ -20,9 +20,8 @@ class CloudSystem {
       vertexCount: { min: 20, max: 32 }, // INCREASED: Even more vertices for smoother clouds
       vertexJitter: 0.2,       // Keep jitter for natural appearance
       distribution: 0.3,       // Distribution bias toward equator
-      fogColor: 0x8bb0ff,      // Atmospheric fog color
-      fogDensity: 0.000015,    // Fog density
-      // Added smooth orbit parameters
+      // fogColor: 0x8bb0ff,      // REMOVED - Was for atmospheric halo
+      // fogDensity: 0.000015,    // REMOVED - Was for atmospheric halo
       orbitSmoothing: 0.5,     // Higher values make orbits more natural
       individualRotation: true, // Whether clouds rotate on their own axis
       // Added anime style parameters
@@ -45,12 +44,41 @@ class CloudSystem {
       skyboxTexturePath: null, // UPDATED: Path for the single skybox texture file (e.g., 'static/textures/sky.hdr')
       // REMOVED: skyboxImages option
       // skyboxImages: [ ... ],
+      
+      // New Surface Fog Options
+      enableSurfaceFog: false,
+      surfaceFogPoofCount: 50,          // INCREASED for more coverage
+      surfaceFogParticlesPerPoof: 250,  // INCREASED for better density
+      surfaceFogPoofRadius: 25,         // Horizontal spread of a poof
+      surfaceFogPoofHeight: 50,         // Vertical height of a poof
+      surfaceFogParticleSize: 40,       // INCREASED for larger particle image
+      surfaceFogParticleColor: 0xaaddff,
+      surfaceFogParticleOpacity: 0.07, // SLIGHTLY INCREASED for more glow
+      surfaceFogRiseSpeed: 0.7,
+      // surfaceFogSphereRadius will default to options.sphereRadius
+      surfaceFogTexturePath: 'static/images/soft_particle.png', // <-- NEW OPTION
+
       ...options 
     };
     this.clouds = [];
     this.cloudGroups = [];
     this.planetCenter = new THREE.Vector3(0, 0, 0); // Default planet center
     this.options.sphereRadius = this.options.sphereRadius || 400; // Ensure sphereRadius is set
+
+    // Surface Fog Poofs
+    this.surfaceFogPoofs = [];
+    this.surfaceFogConfig = { // Store processed fog config
+      sphereRadius: this.options.surfaceFogSphereRadius || this.options.sphereRadius,
+      poofCount: this.options.surfaceFogPoofCount,
+      particlesPerPoof: this.options.surfaceFogParticlesPerPoof,
+      poofHorizontalSpread: this.options.surfaceFogPoofRadius,
+      poofVerticalSpread: this.options.surfaceFogPoofHeight,
+      particleSize: this.options.surfaceFogParticleSize,
+      particleColor: new THREE.Color(this.options.surfaceFogParticleColor),
+      particleOpacity: this.options.surfaceFogParticleOpacity,
+      riseSpeed: this.options.surfaceFogRiseSpeed,
+      texturePath: this.options.surfaceFogTexturePath // Add texture path to config
+    };
 
     // Pre-initialize materials to avoid flickering
     this._initMaterials();
@@ -89,22 +117,10 @@ class CloudSystem {
     this.initializing = true;
     this.positionsStabilized = false; // Ensure this is false initially
     
-    // Set up atmospheric fog
-    if (!this.scene.fog) {
-      this.scene.fog = new THREE.FogExp2(
-        this.options.fogColor,
-        this.options.fogDensity
-      );
-      
-      // Set sky background color for cosmic effect
-      if (!this.scene.background) {
-        const skyColor = new THREE.Color(this.options.fogColor).lerp(new THREE.Color(0x0a1030), 0.4);
-        this.scene.background = skyColor;
-      }
-      
-      // Create atmospheric halo effect if needed
-      this._createAtmosphericHalo();
-    }
+    // REMOVED: Fog setup code & _createAtmosphericHalo call
+    // if (!this.atmosphereMesh) {
+    //   this._createAtmosphericHalo();
+    // }
     
     // Store existing cloud positions before recreation if preserving
     const oldClouds = preservePositions ? this.clouds.map(cloud => ({
@@ -159,100 +175,99 @@ class CloudSystem {
 
     // NEW: Setup skybox if path is provided
     this._setupSkybox();
+
+    // Initialize surface fog if enabled
+    if (this.options.enableSurfaceFog) {
+      this._createSurfaceFogPoofs();
+    }
   }
 
-  /**
-   * Creates an atmospheric halo effect around the planet
-   * @private
-   */
-  _createAtmosphericHalo() {
-    // Get reference to planet radius 
-    const planetRadius = this.options.sphereRadius || 400;
-    
-    // Create a sphere slightly larger than the planet
-    const atmosphereGeometry = new THREE.SphereGeometry(planetRadius * 1.1, 64, 48);
-    
-    // Create atmospheric shader material
-    const atmosphereMaterial = new THREE.ShaderMaterial({
-      uniforms: {
-        planetRadius: { value: planetRadius },
-        atmosphereRadius: { value: planetRadius * 1.1 },
-        atmosphereColor: { value: new THREE.Color(0x4a85ff) },
-        sunDirection: { value: new THREE.Vector3(1, 0.4, 0.1).normalize() },
-        glowIntensity: { value: 0.8 }, // Add adjustable intensity parameter
-        fogColor: { value: new THREE.Color(this.options.fogColor) },
-        fogDensity: { value: this.options.fogDensity }
-      },
-      vertexShader: `
-        varying vec3 vNormal;
-        varying vec3 vPosition;
-        varying float vFogDepth;
-        
-        void main() {
-          vNormal = normalize(normalMatrix * normal);
-          vPosition = (modelMatrix * vec4(position, 1.0)).xyz;
-          
-          // Calculate position for fog
-          vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-          gl_Position = projectionMatrix * mvPosition;
-          
-          // Pass fog depth to fragment shader
-          vFogDepth = -mvPosition.z;
-        }
-      `,
-      fragmentShader: `
-        uniform vec3 atmosphereColor;
-        uniform vec3 sunDirection;
-        uniform float planetRadius;
-        uniform float atmosphereRadius;
-        uniform vec3 fogColor;
-        uniform float fogDensity;
-        
-        varying vec3 vNormal;
-        varying vec3 vPosition;
-        varying float vFogDepth;
-        
-        void main() {
-          // Calculate view direction
-          vec3 viewDirection = normalize(cameraPosition - vPosition);
-          
-          // Calculate rim lighting effect (stronger at edges)
-          float rim = 1.0 - max(dot(vNormal, viewDirection), 0.0);
-          rim = pow(rim, 2.5); // Adjust power for thickness
-          
-          // Add sun-side highlight
-          float sunFactor = max(dot(vNormal, sunDirection), 0.0);
-          float glowIntensity = mix(0.3, 1.0, sunFactor);
-          
-          // Final atmosphere color with rim effect
-          vec3 finalColor = atmosphereColor * glowIntensity;
-          
-          // Set alpha for transparency
-          float alpha = rim * 0.6; // Adjust for visibility
-          
-          // Apply fog calculation
-          float fogFactor = exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
-          fogFactor = clamp(fogFactor, 0.0, 1.0);
-          
-          // Mix with fog color based on fog factor
-          finalColor = mix(fogColor, finalColor, fogFactor);
-          
-          gl_FragColor = vec4(finalColor, alpha);
-        }
-      `,
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      side: THREE.BackSide, // Only show the inside of the sphere
-      depthWrite: false,
-      fog: true // Enable fog support
+  _createSurfaceFogPoofs() {
+    console.log('[CloudSystem] Creating surface fog poofs with config:', this.surfaceFogConfig);
+    // Clear existing fog poofs
+    this.surfaceFogPoofs.forEach(poof => {
+      this.scene.remove(poof.points);
+      poof.geometry.dispose();
+      poof.material.dispose();
     });
-    
-    // Create mesh and add to scene
-    const atmosphereMesh = new THREE.Mesh(atmosphereGeometry, atmosphereMaterial);
-    this.scene.add(atmosphereMesh);
-    
-    // Store reference for updates
-    this.atmosphereMesh = atmosphereMesh;
+    this.surfaceFogPoofs = [];
+
+    const config = this.surfaceFogConfig;
+
+    // Load the particle texture
+    const textureLoader = new THREE.TextureLoader();
+    let particleTexture = null;
+    if (this.surfaceFogConfig.texturePath) {
+        try {
+            particleTexture = textureLoader.load(this.surfaceFogConfig.texturePath);
+            console.log(`[CloudSystem] Attempting to load particle texture from: ${this.surfaceFogConfig.texturePath}`);
+        } catch (error) {
+            console.error(`[CloudSystem] Error loading particle texture: ${this.surfaceFogConfig.texturePath}`, error);
+            // Fallback or default behavior if texture fails to load
+        }
+    } else {
+        console.warn("[CloudSystem] No surfaceFogTexturePath specified. Particles may appear as squares.");
+    }
+
+    for (let i = 0; i < config.poofCount; i++) {
+      const patchNormal = new THREE.Vector3().randomDirection(); // "Up" direction for the patch on the sphere
+      const patchCenterSurface = patchNormal.clone().multiplyScalar(config.sphereRadius);
+
+      const positions = new Float32Array(config.particlesPerPoof * 3);
+      const particleBaseRelativePositions = []; // Store base positions relative to patch center for reset
+
+      // Create tangent vectors for horizontal spread relative to patchNormal
+      let tangent1 = new THREE.Vector3().crossVectors(patchNormal, new THREE.Vector3(0, 1, 0));
+      if (tangent1.lengthSq() < 0.001) { // Handle case where patchNormal is aligned with Y-axis
+        tangent1.crossVectors(patchNormal, new THREE.Vector3(1, 0, 0));
+      }
+      tangent1.normalize();
+      const tangent2 = new THREE.Vector3().crossVectors(patchNormal, tangent1).normalize();
+
+      for (let j = 0; j < config.particlesPerPoof; j++) {
+        const angle = Math.random() * Math.PI * 2;
+        const radius = Math.random() * config.poofHorizontalSpread;
+        const horizontalOffset = tangent1.clone().multiplyScalar(Math.cos(angle) * radius)
+                                   .add(tangent2.clone().multiplyScalar(Math.sin(angle) * radius));
+
+        const verticalOffsetAmount = Math.random() * config.poofVerticalSpread;
+        const verticalOffset = patchNormal.clone().multiplyScalar(verticalOffsetAmount);
+        
+        const particlePos = patchCenterSurface.clone().add(horizontalOffset).add(verticalOffset);
+        
+        positions[j * 3 + 0] = particlePos.x;
+        positions[j * 3 + 1] = particlePos.y;
+        positions[j * 3 + 2] = particlePos.z;
+        
+        particleBaseRelativePositions.push(horizontalOffset.clone().add(verticalOffset));
+      }
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+      const material = new THREE.PointsMaterial({
+        color: config.particleColor,
+        size: config.particleSize,
+        opacity: config.particleOpacity,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        sizeAttenuation: false, // CHANGED: Make particle size screen-space
+        map: particleTexture // Apply texture
+      });
+
+      const points = new THREE.Points(geometry, material);
+      this.scene.add(points);
+      this.surfaceFogPoofs.push({ 
+        points, 
+        geometry, 
+        material, 
+        patchNormal, 
+        patchCenterSurface,
+        particleBaseRelativePositions 
+      });
+    }
+    console.log(`[CloudSystem] Created ${this.surfaceFogPoofs.length} surface fog poofs.`);
   }
 
   createClouds(preservePositions = false, oldClouds = []) {
@@ -841,19 +856,6 @@ class CloudSystem {
   }
 
   update(deltaTime) {
-    // Update atmospheric halo if it exists
-    if (this.atmosphereMesh) {
-      // Update sun direction slowly over time for dynamic lighting
-      const time = Date.now() * 0.0001;
-      const sunDir = new THREE.Vector3(
-        Math.sin(time * 0.5),
-        Math.cos(time * 0.3),
-        Math.sin(time * 0.7)
-      ).normalize();
-      
-      this.atmosphereMesh.material.uniforms.sunDirection.value.copy(sunDir);
-    }
-
     const dt = Math.min(deltaTime, 0.1);
     
     // Check initialization status
@@ -929,6 +931,68 @@ class CloudSystem {
       
       // 5. REMOVED: Individual cloud rotation to emphasize orbital motion
     });
+
+    // Update Surface Fog Poofs
+    if (this.options.enableSurfaceFog && this.surfaceFogPoofs.length > 0) {
+      const config = this.surfaceFogConfig;
+      const riseAmount = config.riseSpeed * dt * 10; // Multiplied for visible speed, adjust as needed
+      
+      // Define boundaries for particle reset based on the poof's local "up" (patchNormal)
+      // Max height relative to the patch center surface, along the patchNormal.
+      const maxParticleHeightAboveSurface = config.poofVerticalSpread * 1.5; 
+      // Min height for reset, slightly below or at the surface.
+      const minParticleHeightAboveSurface = config.poofVerticalSpread * -0.1;
+
+
+      this.surfaceFogPoofs.forEach(poof => {
+        const positions = poof.geometry.attributes.position.array;
+        const patchNormal = poof.patchNormal;
+        const patchCenterSurface = poof.patchCenterSurface;
+
+        for (let i = 0; i < positions.length; i += 3) {
+          const currentPos = new THREE.Vector3(positions[i], positions[i+1], positions[i+2]);
+          
+          // Move particle along its poof's normal (radially outward from poof's perspective on sphere)
+          currentPos.addScaledVector(patchNormal, riseAmount);
+
+          // Check if particle is too "high" relative to its patch center and normal
+          const heightAboveSurface = currentPos.clone().sub(patchCenterSurface).dot(patchNormal);
+
+          if (heightAboveSurface > maxParticleHeightAboveSurface) {
+            // Reset particle to a new position at the bottom of its poof's vertical spread,
+            // maintaining a similar horizontal offset distribution.
+            const particleIndex = i / 3; // Should be safe if particleBaseRelativePositions was populated correctly
+
+            // Create a new random horizontal offset for variety upon reset
+            const angle = Math.random() * Math.PI * 2;
+            const radius = Math.random() * config.poofHorizontalSpread;
+
+            let tangent1 = new THREE.Vector3().crossVectors(patchNormal, new THREE.Vector3(0, 1, 0));
+            if (tangent1.lengthSq() < 0.001) { 
+              tangent1.crossVectors(patchNormal, new THREE.Vector3(1, 0, 0));
+            }
+            tangent1.normalize();
+            const tangent2 = new THREE.Vector3().crossVectors(patchNormal, tangent1).normalize();
+
+            const horizontalOffset = tangent1.clone().multiplyScalar(Math.cos(angle) * radius)
+                                       .add(tangent2.clone().multiplyScalar(Math.sin(angle) * radius));
+            
+            // Start at the base of the poof's height or slightly below
+            const verticalOffsetAmount = (Math.random() * 0.2 + (minParticleHeightAboveSurface / config.poofVerticalSpread)) * config.poofVerticalSpread;
+            const verticalOffset = patchNormal.clone().multiplyScalar(verticalOffsetAmount);
+
+            const resetPos = patchCenterSurface.clone().add(horizontalOffset).add(verticalOffset);
+            
+            currentPos.copy(resetPos);
+          }
+          
+          positions[i] = currentPos.x;
+          positions[i+1] = currentPos.y;
+          positions[i+2] = currentPos.z;
+        }
+        poof.geometry.attributes.position.needsUpdate = true;
+      });
+    }
   }
 
   // Helper methods for disposing resources
@@ -945,6 +1009,17 @@ class CloudSystem {
     
     if (this.cloudMaterial) this.cloudMaterial.dispose();
     this.clouds = [];
+
+    // Dispose surface fog poofs
+    this.surfaceFogPoofs.forEach(poof => {
+      if (poof.points) this.scene.remove(poof.points);
+      if (poof.geometry) poof.geometry.dispose();
+      if (poof.material) poof.material.dispose();
+    });
+    this.surfaceFogPoofs = [];
+
+    // REMOVED: Dispose atmosphereMesh
+    // if (this.atmosphereMesh) { ... }
   }
 
   // Set planet center position
@@ -953,24 +1028,18 @@ class CloudSystem {
     console.log(`Cloud system planet center updated to: ${position.x}, ${position.y}, ${position.z}`);
   }
 
-  // Controls for atmospheric effects
+  // Controls for atmospheric effects - UPDATED to avoid modifying scene.fog
   setAtmosphericDensity(density) {
-    if (this.scene.fog && this.scene.fog.density !== undefined) {
-      this.scene.fog.density = density;
-      console.log(`Atmospheric fog density updated to: ${density}`);
-    }
+    // This method previously controlled the atmospheric halo.
+    // It can be repurposed or removed. For now, it does nothing.
+    // this.options.fogDensity = density; // This option is no longer used for halo
+    console.warn('[CloudSystem] setAtmosphericDensity is deprecated as atmospheric halo was removed.');
   }
 
   setAtmosphereIntensity(intensity) {
-    if (this.atmosphereMesh && this.atmosphereMesh.material) {
-      const material = this.atmosphereMesh.material;
-      material.uniforms.glowIntensity = { value: Math.max(0, Math.min(1, intensity)) };
-    }
-    
-    if (this.scene.fog && this.scene.fog.density !== undefined) {
-      const baseDensity = this.options.fogDensity;
-      this.scene.fog.density = baseDensity * (1.0 / Math.max(0.1, intensity));
-    }
+    // This method previously controlled the atmospheric halo.
+    // It can be repurposed or removed. For now, it does nothing.
+    console.warn('[CloudSystem] setAtmosphereIntensity is deprecated as atmospheric halo was removed.');
   }
 
   // Adjust cloud heights
