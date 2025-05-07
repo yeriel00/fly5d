@@ -6,7 +6,6 @@ import * as THREE from 'three';
 // Import the FULL terrain height function and initEnvironment
 import { initEnvironment, collidables, getFullTerrainHeight } from './world_objects.js';
 // import OrientationHelper from './OrientationHelper.js';
-import FXManager from './fx_manager.js';
 import LowPolyGenerator from './low_poly_generator.js';
 // import AudioManager from './audio_manager.js'; // Comment out the audio manager import if you don't need it
 import Player from './player.js';
@@ -639,13 +638,6 @@ initEnvironment(scene, 'medium', worldConfig, (placerFunc, pineTreePositions) =>
     player.weaponSystem.projectileSystem.options.splashParticleCount = 5;
   }
   
-  //  Initialize FX Manager AFTER player is created, using player's camera
-  fxManager = new FXManager(scene, player.getCamera(), renderer);
-  window.fxManager = fxManager; // Make fxManager globally accessible
-  console.log('[Main] FX Manager initialized.');
-  // Pass the sphere radius to the fog setup function
-  fxManager.setupAtmosphericFog(R); // Pass sphereRadius (R) to the fog setup
-  
   // Initialize player UI including weapon controls
   initializePlayerUI();
   
@@ -787,12 +779,22 @@ initEnvironment(scene, 'medium', worldConfig, (placerFunc, pineTreePositions) =>
     rotationSpeed: 0.0007, // Slightly slower for distance effect (from 0.0009)
     opacity: 0.85,   // Slightly less opaque for distance
     distribution: 0.4,
-    fogDensity: 0.000012, // INCREASED: More fog for distance (from 0.000008)
-    fogColor: 0x7a9fdd, // Slightly adjusted fog color for depth
     sphereRadius: R, // Ensure sphereRadius is passed
     // UPDATED: Specify the path to your SINGLE skybox texture file
     skyboxTexturePath: 'static/images/StandardCubeMap.png', // ADJUST FILENAME AND PATH
-    // REMOVED: skyboxImages array is no longer needed
+
+    // New Surface Fog Options
+    enableSurfaceFog: true, // Enable the new surface fog
+    surfaceFogPoofCount: 2000, // INCREASED from 50 to 80 for more clusters
+    surfaceFogParticlesPerPoof: 260, // SLIGHTLY DECREASED from 200 to balance density
+    surfaceFogPoofRadius: 2500, // INCREASED from 35 to 50 for more spread
+    surfaceFogPoofHeight: 20, // Vertical height of each poof
+    surfaceFogParticleSize: 2500, // SLIGHTLY INCREASED from 25 for a bit more presence
+    surfaceFogParticleColor: 0xd0e4fe, // Brighter, slightly bluish white for glow
+    surfaceFogParticleOpacity: 0.010, // SLIGHTLY INCREASED from 0.04 for more glow
+    surfaceFogRiseSpeed: 0.25,
+    surfaceFogTexturePath: 'static/images/soft_particle.png', // <-- ADD TEXTURE PATH
+    // surfaceFogSphereRadius will default to options.sphereRadius (which is R)
   };
   console.log("[Main] Using distant cloud options for initial creation:", distantCloudOptions);
 
@@ -1031,11 +1033,6 @@ function animate(timestamp) {
   // Update FX Manager
   if (fxManager) {
     fxManager.update();
-    
-    // ADDED: Update fog density based on player position for better visibility near grass
-    if (player && player.playerObject) {
-      fxManager.updateFogBasedOnHeight(player.playerObject.position);
-    }
   }
 
   // FIXED: Use fxManager.render() instead of direct renderer call

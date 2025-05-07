@@ -32,7 +32,8 @@ const VolumetricFogShader = {
     groundFogDensity: { value: 3.0 },
     groundFogHeight: { value: 15.0 },
     glowIntensity: { value: 0.3 }, // Control for the ground fog glow effect
-    sunPosition: { value: new THREE.Vector3(0, 1, 0) } // For light shaft/fringe effects
+    sunPosition: { value: new THREE.Vector3(0, 1, 0) }, // For light shaft/fringe effects
+    sphereRadius: { value: 400.0 } // Radius of the planet for horizon shell mapping
   },
 
   vertexShader: /* glsl */`
@@ -71,6 +72,7 @@ const VolumetricFogShader = {
     uniform float groundFogHeight;
     uniform float glowIntensity;
     uniform vec3 sunPosition;
+    uniform float sphereRadius; // Radius of the planet for horizon shell mapping
 
     varying vec2 vUv;
     
@@ -201,9 +203,13 @@ const VolumetricFogShader = {
         
         vec3 samplePos = cameraPosition + rayDir * t;
         
-        // Ground fog - stronger near the ground and weakens with height
-        float heightAboveGround = max(0.0, samplePos.y);
-        float groundFogFactor = exp(-heightAboveGround / groundFogHeight);
+        // Add vertical wobble to sampling position for more smoke-like layering
+        samplePos.y += sin(samplePos.x * 0.05 + samplePos.z * 0.03 + time * 0.2) * 5.0;
+        samplePos.y += cos(samplePos.z * 0.06 + time * 0.15) * 4.0;
+        
+        // Determine height above the sphere surface (shell) instead of global Y
+        float heightAboveSurface = max(0.0, length(samplePos) - sphereRadius);
+        float groundFogFactor = exp(-heightAboveSurface / groundFogHeight);
         
         // Apply noise to the ground fog
         vec2 noiseCoord = samplePos.xz * noiseScale;
@@ -216,19 +222,22 @@ const VolumetricFogShader = {
         float largeScaleVariation = fbm(samplePos * 0.03 + time * 0.01);
         
         // Combine ground fog with noise
-        // ADJUSTED: Slightly reduced noise influence for smoother look
-        float localDensity = groundFogFactor * groundFogDensity * (0.7 + detailNoise * 0.3); 
+        // MODIFIED: Increased noise influence for more natural smoke-like appearance
+        float localDensity = groundFogFactor * groundFogDensity * (0.5 + detailNoise * 0.5); 
         
         // Apply rolling wave pattern to ground fog
         float waveEffect = sin(samplePos.x * 0.05 + time * 0.2) * 0.5 + 0.5;
         waveEffect *= sin(samplePos.z * 0.04 - time * 0.15) * 0.5 + 0.5;
-        localDensity *= mix(0.8, 1.2, waveEffect); // Adjusted wave effect range
+        // INCREASED: Wave effect range for more vertical variation
+        localDensity *= mix(0.6, 1.4, waveEffect); 
         
         // Apply global fog pattern to create patches of fog
-        localDensity *= (0.8 + globalNoise * 0.4); // Adjusted global noise influence
+        // INCREASED: Global noise influence for more patchy fog appearance
+        localDensity *= (0.7 + globalNoise * 0.6); 
         
         // Add subtle vertical turbulence based on time
-        float turbulence = sin(samplePos.y * 0.2 + time * 0.1) * 0.05;
+        // INCREASED: Vertical turbulence for more smoke-like behavior
+        float turbulence = sin(samplePos.y * 0.2 + time * 0.1) * 0.15;
         localDensity *= (1.0 + turbulence);
         
         // Distance based fog density (thicker in the distance)
@@ -242,9 +251,21 @@ const VolumetricFogShader = {
       // Apply exponential fog with intensity control
       float finalFogAmount = 1.0 - exp(-fogAmount * fogIntensity);
       
-      // Height-based fog color gradient
-      float heightMix = clamp(worldPos.y / groundFogHeight, 0.0, 1.0);
-      vec3 finalFogColor = mix(fogColorBottom, fogColor, pow(heightMix, 1.2));
+      // Height-based fog color gradient with improved volume transition
+      // Use radial height for height-based color blending instead of world Y
+      float radialHeight = max(0.0, length(worldPos) - sphereRadius);
+      float heightMix = clamp(radialHeight / (groundFogHeight * 1.5), 0.0, 1.0); // Increased blend region 
+      // Non-linear blending for smoother transition 
+      heightMix = pow(heightMix, 0.8); // Softer power curve for better volume
+      vec3 finalFogColor = mix(fogColorBottom, fogColor, heightMix);
+      
+      // Add subtle variation to the color mix based on noise
+      vec2 colorNoiseCoord = worldPos.xz * 0.003;
+      float colorNoise = fbmNoise(colorNoiseCoord + time * 0.02);
+      // Add subtle color variation for more interesting fog 
+      finalFogColor = mix(finalFogColor, 
+                         mix(fogColorBottom, fogColor, 1.0 - heightMix) * 1.05, 
+                         colorNoise * 0.2);
       
       // Add subtle blue tint to distant fog
       float distanceFactor = clamp(linearDepth / (cameraFar * 0.5), 0.0, 1.0);
@@ -472,6 +493,7 @@ class VolumetricFog {
     this.fogMaterial.uniforms.groundFogHeight.value = this.options.groundFogHeight;
     this.fogMaterial.uniforms.glowIntensity.value = this.options.glowIntensity;
     this.fogMaterial.uniforms.sunPosition.value = new THREE.Vector3(500, 300, -200); // Default sun position
+    this.fogMaterial.uniforms.sphereRadius.value = this.options.sphereRadius;
 
     // Create simple fullscreen quad
     this.quad = new THREE.Mesh(
