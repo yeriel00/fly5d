@@ -15,7 +15,7 @@ class CloudSystem {
       minScale: 40,            // Minimum cloud scale
       maxScale: 80,            // Maximum cloud scale
       rotationSpeed: 0.00035,  // Orbit rotation speed
-      opacity: 0.9,            // Cloud opacity
+      opacity: 0.08,            // Cloud opacity
       color: 0xffffff,         // Cloud color
       vertexCount: { min: 20, max: 32 }, // INCREASED: Even more vertices for smoother clouds
       vertexJitter: 0.2,       // Keep jitter for natural appearance
@@ -34,7 +34,7 @@ class CloudSystem {
       // Edge buffering parameters - ENHANCED
       edgeVertexDensity: 0.7,  // INCREASED: More vertices around edges (from 0.4)
       edgeSmoothing: 0.45,     // INCREASED: More smoothing of edge vertices (from 0.3)
-      edgeFeathering: 0.2,     // NEW: Controls opacity gradient at edges
+      edgeFeathering: 0.52,     // NEW: Controls opacity gradient at edges
       // Movement parameters
       floatAmplitude: 0.2,     // REDUCED: Smaller float amplitude for less vertical movement (from 0.5)
       floatFrequency: 0.2,     // NEW: Controls speed of floating motion
@@ -49,10 +49,10 @@ class CloudSystem {
       enableSurfaceFog: false,
       surfaceFogPoofCount: 50,          // INCREASED for more coverage
       surfaceFogParticlesPerPoof: 250,  // INCREASED for better density
-      surfaceFogPoofRadius: 25,         // Horizontal spread of a poof
+      surfaceFogPoofRadius: 250,         // Horizontal spread of a poof
       surfaceFogPoofHeight: 50,         // Vertical height of a poof
-      surfaceFogParticleSize: 40,       // INCREASED for larger particle image
-      surfaceFogParticleColor: 0xaaddff,
+      surfaceFogParticleSize: 2,       // ADJUSTED for world units
+      surfaceFogParticleColor: 0xfcf3ff,
       surfaceFogParticleOpacity: 0.07, // SLIGHTLY INCREASED for more glow
       surfaceFogRiseSpeed: 0.7,
       // surfaceFogSphereRadius will default to options.sphereRadius
@@ -252,7 +252,7 @@ class CloudSystem {
         transparent: true,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
-        sizeAttenuation: false, // CHANGED: Make particle size screen-space
+        sizeAttenuation: true, // CHANGED: Make particle size world-space
         map: particleTexture // Apply texture
       });
 
@@ -993,6 +993,24 @@ class CloudSystem {
         poof.geometry.attributes.position.needsUpdate = true;
       });
     }
+  }
+
+  // Method to set surface fog particle size (now in world units)
+  setSurfaceFogParticleWorldSize(newWorldSize) {
+    if (typeof newWorldSize !== 'number' || newWorldSize <= 0) {
+      console.warn("[CloudSystem] Invalid newWorldSize for surface fog particles:", newWorldSize);
+      return;
+    }
+
+    this.surfaceFogConfig.particleSize = newWorldSize;
+    // console.log(`[CloudSystem] Surface fog particle world size set to: ${newWorldSize}`);
+
+    this.surfaceFogPoofs.forEach(poof => {
+      if (poof && poof.material) {
+        poof.material.size = newWorldSize;
+        poof.material.needsUpdate = true;
+      }
+    });
   }
 
   // Helper methods for disposing resources

@@ -81,7 +81,7 @@ export class Bird {
     this.createTail(colorScheme.body);
     
     // Apply random scaling
-    const scale = config.minScale + Math.random() * (config.maxScale - config.minScale);
+    const scale = config.minScale + Math.random() * (config.maxScale - config.maxScale);
     this.group.scale.set(scale, scale, scale);
     
     // Set orbit parameters with more deliberate distribution
@@ -125,53 +125,76 @@ export class Bird {
     if (deltaTime > 0) {
       this.orbitAngle += this.orbitSpeed * deltaTime;
     }
-    
-    let x, y, z;
-    
-    // Apply selected flight pattern - EXACT SAME LOGIC as updatePosition
+
+    let localX, localY, localZ;
+    // Use this.orbitRadius as the effective radius for the XZ projection before Y offset.
+    // The flight patterns will define X and Z as if on a disk of this radius,
+    // and Y as an offset from that disk.
+    const effectiveRadiusForXZ = this.orbitRadius;
+
     switch (this.flightPattern.type) {
       case 'circle':
-        x = this.orbitRadius * Math.cos(this.orbitAngle);
-        z = this.orbitRadius * Math.sin(this.orbitAngle);
-        y = this.orbitHeight + this.flightPattern.height;
+        localX = effectiveRadiusForXZ * Math.cos(this.orbitAngle);
+        localZ = effectiveRadiusForXZ * Math.sin(this.orbitAngle);
+        localY = this.flightPattern.height; // This is an offset from the XZ plane of the orbit
         break;
-        
       case 'figure8':
-        // Figure 8 pattern
-        x = this.orbitRadius * Math.cos(this.orbitAngle);
-        z = this.orbitRadius * Math.sin(this.orbitAngle * 2) * 0.5;
-        y = this.orbitHeight + this.flightPattern.height + Math.sin(this.orbitAngle) * 15;
+        localX = effectiveRadiusForXZ * Math.cos(this.orbitAngle);
+        localZ = effectiveRadiusForXZ * Math.sin(this.orbitAngle * 2) * 0.5; // Z component for figure-8
+        localY = this.flightPattern.height + Math.sin(this.orbitAngle) * 15;
         break;
-        
       case 'wavy':
-        // Wavy up and down pattern
-        x = this.orbitRadius * Math.cos(this.orbitAngle);
-        z = this.orbitRadius * Math.sin(this.orbitAngle);
-        y = this.orbitHeight + this.flightPattern.height + 
+        localX = effectiveRadiusForXZ * Math.cos(this.orbitAngle);
+        localZ = effectiveRadiusForXZ * Math.sin(this.orbitAngle);
+        localY = this.flightPattern.height + 
             Math.sin(this.orbitAngle * 3) * this.flightPattern.amplitude;
         break;
-        
       case 'random':
-        // Random direction changes
         if (deltaTime > 0 && Date.now() > this.directionChangeTime) {
           this.randomFactor = Math.random() * Math.PI * 2;
           this.directionChangeTime = Date.now() + this.flightPattern.changeTime;
         }
-        
-        x = this.orbitRadius * Math.cos(this.orbitAngle + this.randomFactor);
-        z = this.orbitRadius * Math.sin(this.orbitAngle + this.randomFactor);
-        y = this.orbitHeight + Math.sin(this.orbitAngle * 0.5) * 15;
+        localX = effectiveRadiusForXZ * Math.cos(this.orbitAngle + this.randomFactor);
+        localZ = effectiveRadiusForXZ * Math.sin(this.orbitAngle + this.randomFactor);
+        localY = Math.sin(this.orbitAngle * 0.5) * 15;
         break;
-        
       default:
-        // Default circular pattern
-        x = this.orbitRadius * Math.cos(this.orbitAngle);
-        z = this.orbitRadius * Math.sin(this.orbitAngle);
-        y = this.orbitHeight;
+        localX = effectiveRadiusForXZ * Math.cos(this.orbitAngle);
+        localZ = effectiveRadiusForXZ * Math.sin(this.orbitAngle);
+        localY = 0;
     }
     
-    // Return the calculated position without applying it yet
-    return new THREE.Vector3(x, y, z);
+    // Add the bird's intrinsic `orbitHeight` (the random initial elevation parameter) to localY.
+    // This `orbitHeight` helps differentiate birds vertically before wrapping to the sphere.
+    localY += this.orbitHeight;
+
+    let posVec = new THREE.Vector3(localX, localY, localZ);
+    
+    // Normalize this vector and scale by `this.orbitRadius`.
+    // This wraps the calculated (localX, localY, localZ) point onto the surface of a sphere
+    // with radius `this.orbitRadius`. The `localY` (which includes pattern height and orbitHeight)
+    // effectively influences the bird's "latitude" on this sphere.
+    if (posVec.lengthSq() === 0) {
+        // Fallback: if vector is zero (e.g., if orbitRadius is 0 or all components are 0),
+        // position it along X-axis at orbitRadius to avoid NaN from normalize().
+        // This should ideally not happen with typical parameters.
+        posVec.set(this.orbitRadius, 0, 0);
+    } else {
+        posVec.normalize().multiplyScalar(this.orbitRadius);
+    }
+
+    // The BirdSystem's initialization (using Fibonacci sphere) calculates an `orbitAxis` 
+    // and `orbitPlaneRotation` for each bird, intending to give each bird an individually tilted orbit.
+    // If that system were to be fully utilized here, the `posVec` calculated above 
+    // would represent a point in a canonical orbital plane (e.g., orbit around global Y axis).
+    // This point would then need to be rotated by the bird's specific `orbitPlaneRotation` (or quaternion).
+    // However, the current BirdSystem.update directly sets `bird.group.position.copy(newPos)`,
+    // implying `calculatePosition` should return final world coordinates.
+    // The current spherical wrapping method achieves a world coordinate on the main sphere defined by `this.orbitRadius`.
+    // Further work would be needed to apply individual orbital tilts based on `orbitAxis` and `orbitPlaneRotation`
+    // on top of this spherical wrapping if that's desired.
+
+    return posVec;
   }
   
   createWings(color) {
@@ -322,30 +345,57 @@ export class Bird {
     // Calculate velocity vector for orientation
     const currentPos = this.group.position.clone();
     
-    // Calculate velocity vector by predicting next position
-    const nextAngle = this.orbitAngle + this.orbitSpeed * 0.1;
-    let nextX, nextZ;
+    // Predict next position by advancing the angle slightly.
+    // We pass a small, non-zero deltaTime to calculatePosition so it updates the internal angle for prediction.
+    // Store and restore original angle because calculatePosition modifies it.
+    const originalAngle = this.orbitAngle;
+    // const smallDeltaTimeForPrediction = 0.01; // A small time step into the future
+    // this.orbitAngle += this.orbitSpeed * smallDeltaTimeForPrediction; // Advance angle
+    // const nextPos = this.calculatePosition(0); // Calculate next pos with already advanced angle (pass 0 deltaTime)
+    // this.orbitAngle = originalAngle; // Restore original angle
+
+    // Simpler way to get nextPos without modifying this.orbitAngle within this call sequence for orientBird:
+    // Create a temporary state for prediction.
+    const tempBirdState = {
+        orbitAngle: this.orbitAngle + this.orbitSpeed * 0.01, // Future angle
+        orbitSpeed: this.orbitSpeed, // Needed by calculatePosition if it were to use deltaTime > 0
+        flightPattern: this.flightPattern,
+        orbitHeight: this.orbitHeight,
+        orbitRadius: this.orbitRadius,
+        config: this.config, // If calculatePosition accesses this.config
+        randomFactor: this.randomFactor, // If applicable
+        directionChangeTime: this.directionChangeTime // If applicable
+    };
     
-    // Use same pattern logic to predict next position
-    if (this.flightPattern.type === 'figure8') {
-      nextX = this.orbitRadius * Math.cos(nextAngle);
-      nextZ = this.orbitRadius * Math.sin(nextAngle * 2) * 0.5;
-    } else {
-      nextX = this.orbitRadius * Math.cos(nextAngle);
-      nextZ = this.orbitRadius * Math.sin(nextAngle);
-    }
+    // Call a static-like version or pass state to calculatePosition if it were refactored.
+    // For now, temporarily set and restore on the instance for prediction.
+    this.orbitAngle += this.orbitSpeed * 0.01; // Advance angle
+    const nextPos = this.calculatePosition(0); // deltaTime = 0 means don't advance angle further
+    this.orbitAngle = originalAngle; // Restore
+
+
+    const velocity = nextPos.clone().sub(currentPos);
     
-    const nextPos = new THREE.Vector3(nextX, currentPos.y, nextZ);
-    const velocity = nextPos.sub(currentPos);
-    
-    // Only update rotation if there's meaningful movement
-    if (velocity.lengthSq() > 0.0001) {
+    if (velocity.lengthSq() > 0.0001) { // Ensure velocity is significant
       const lookTarget = currentPos.clone().add(velocity);
+      
+      // Set the bird's up vector to be the normal of the sphere at its current position.
+      // This makes the bird's belly point towards the center of the sphere.
+      const sphereNormal = this.group.position.clone().normalize();
+      this.group.up.copy(sphereNormal);
+      
       this.group.lookAt(lookTarget);
       
-      // Add banking on turns - more pronounced when turning
-      const turnRate = Math.sin(this.orbitAngle * 2) * 0.1;
-      this.group.rotation.z = turnRate;
+      // Optional: Add banking based on turn rate.
+      // After lookAt with custom 'up', the bird's local axes are reoriented.
+      // Banking would be a roll around its local forward vector (its new Z-axis).
+      // For simplicity, this is omitted for now, as the lookAt with custom up provides good base orientation.
+      // const turnRate = Math.sin(this.orbitAngle * 2) * 0.1; // Old banking logic, likely incorrect now.
+      // this.group.rotateOnAxis(new THREE.Vector3(0, 0, 1), turnRate); // Example if Z was still forward
+
+    } else {
+        // If velocity is near zero, maintain current orientation or default.
+        // This can happen if bird is at a standstill or calculation yields same pos.
     }
   }
   
