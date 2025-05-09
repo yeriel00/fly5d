@@ -36,6 +36,7 @@ export default class Player {
         yellow: 400.0,  // 6.7x faster (was 60)
         green: 800.0    // 10x faster (was 80) - Sniper shot level
       },
+      // fastFallSpeed: 40.0, // REMOVED - Handled by SphereControls.wavedashFastFallSpeed
     }, options);
 
     // *** Initialize multi-ammo storage ***
@@ -189,6 +190,26 @@ export default class Player {
   update(delta) {
     // Update player controls first
     this.controls.update(delta);
+
+    // Wavedash / Fast-fall logic: Player signals intent, SphereControls handles physics.
+    // Player initiates the effect if airborne and crouching.
+    // The condition is simplified to only require being airborne and crouching.
+    const wantsToActivateWavedash = !this.controls.onGround &&
+                            this.isCrouching(); // Simplified condition
+
+    if (wantsToActivateWavedash) {
+      if (this.controls && typeof this.controls.startWavedash === 'function') {
+        this.controls.startWavedash();
+      }
+    } else {
+      // If conditions are no longer met (e.g., landed or stopped crouching),
+      // and a wavedash (fast-fall effect) was in progress, cancel it.
+      if (this.controls &&
+          typeof this.controls.isWavedashing === 'function' && this.controls.isWavedashing() &&
+          typeof this.controls.cancelWavedash === 'function') {
+        this.controls.cancelWavedash();
+      }
+    }
     
     // --- SIMPLIFIED CAMERA ORIENTATION ---
     // Directly use the player object's 'up' vector (calculated in SphereControls based on terrain)

@@ -18,6 +18,18 @@ export default class SphereControls {
     this.playerHeightOffset = options.playerHeightOffset || 0.35;
     this.cameraHeight = options.eyeHeight || 6.6;
 
+    // Wavedash options
+    this.options = Object.assign({
+      // ... existing options like crouchHeight etc.
+      canWavedash: options.canWavedash !== undefined ? options.canWavedash : true,
+      wavedashBoostFactor: options.wavedashBoostFactor || 30.0,
+      wavedashFastFallSpeed: options.wavedashFastFallSpeed || 60.0, // Added fast fall speed
+      crouchHeight: 0.5,
+      crouchSpeedMultiplier: 0.7,
+      crouchTransitionTime: 0.2,
+      getSpeedMultiplier: () => 1.0
+    }, options);
+
     // build yaw->pitch->camera hierarchy
     this.yawObject = new THREE.Object3D();
     this.pitchObject = new THREE.Object3D();
@@ -106,6 +118,9 @@ export default class SphereControls {
     // REMOVED: Height safety limits
     // this.maxHeightAboveGround = 45;
 
+    // Wavedash state
+    this.isWavedashing = false;
+
     // Add crouch options to the constructor
     this.options = Object.assign({
       crouchHeight: 0.5, // Height multiplier when crouching (50% of normal height)
@@ -124,6 +139,20 @@ export default class SphereControls {
     // Store initial camera positions for correct crouching
     this.originalCameraY = options.eyeHeight || 6.6;
     this.cameraHeight = this.originalCameraY;
+  }
+
+  startWavedash() {
+    if (this.options.canWavedash && !this.onGround && !this.isWavedashing) {
+      this.isWavedashing = true;
+      // console.log("SphereControls: Wavedash started");
+    }
+  }
+
+  cancelWavedash() {
+    if (this.isWavedashing) {
+      this.isWavedashing = false;
+      // console.log("SphereControls: Wavedash cancelled");
+    }
   }
 
   getObject() {
@@ -167,6 +196,11 @@ export default class SphereControls {
       if (this.jumpEnabled && this.jumpsRemaining > 0 && this.jumpCooldown <= 0) {
         console.log("JUMP STARTING");
         
+        // If currently wavedashing, cancel it by jumping
+        if (this.isWavedashing) {
+          this.cancelWavedash();
+        }
+
         // Get local up direction
         const upDir = this.yawObject.position.clone().normalize();
         
@@ -212,19 +246,25 @@ export default class SphereControls {
     }
 
     // Add crouch key handling
-    if ((e.key === 'Shift' && (e.code === 'ShiftLeft' || e.keyCode === 16)) && !this.keys.crouching) {
-      // Start crouching
-      this.keys.crouching = true;
-      
-      // Toggle crouch mode if double-tapped quickly
-      const now = Date.now();
-      if (now - this.lastCrouchTime < 300) { // 300ms for double-tap detection
-        this.crouchToggled = !this.crouchToggled;
+    if ((e.key === 'Shift' && (e.code === 'ShiftLeft' || e.keyCode === 16))) {
+      // Original crouch initiation logic (using this.keys.crouching as a specific state flag)
+      if (!this.keys.crouching) { 
+        this.keys.crouching = true; 
+        
+        const now = Date.now();
+        if (now - this.lastCrouchTime < 300) { // 300ms for double-tap detection
+          this.crouchToggled = !this.crouchToggled;
+        }
+        this.lastCrouchTime = now;
+        
+        this.startCrouch(this.crouchToggled);
       }
-      this.lastCrouchTime = now;
-      
-      // If toggled, stay crouched, otherwise crouch while key is held
-      this.startCrouch(this.crouchToggled);
+
+      // REMOVED: Direct call to startWavedash based on Shift key
+      // // If airborne and Shift is pressed/held, enable fast-fall (wavedash)
+      // if (!this.onGround && this.options.canWavedash) {
+      //   this.startWavedash();
+      // }
     }
   }
   
@@ -240,12 +280,20 @@ export default class SphereControls {
 
     // Release crouch if not in toggle mode
     if (e.key === 'Shift' && (e.code === 'ShiftLeft' || e.keyCode === 16)) {
-      this.keys.crouching = false;
-      
-      // Only stop crouching if not in toggle mode
-      if (!this.crouchToggled) {
-        this.stopCrouch();
+      // Original crouch release logic (using this.keys.crouching state flag)
+      if (this.keys.crouching) {
+        this.keys.crouching = false;
+        
+        if (!this.crouchToggled) {
+          this.stopCrouch();
+        }
       }
+      
+      // REMOVED: Direct call to cancelWavedash based on Shift key
+      // // If releasing Shift while airborne and wavedashing, cancel wavedash (stop fast-fall)
+      // if (this.isWavedashing && !this.onGround) {
+      //   this.cancelWavedash();
+      // }
     }
   }
 
@@ -366,8 +414,25 @@ export default class SphereControls {
       // Apply ground friction when not actively moving
       this.velocity.multiplyScalar(this.groundFriction);
     } else {
-      // Apply lighter air friction
-      this.velocity.multiplyScalar(this.airFriction);
+      // Apply lighter air friction unless wavedashing (wavedash handles its own velocity)
+      if (!this.isWavedashing) {
+        this.velocity.multiplyScalar(this.airFriction);
+      }
+    }
+
+    // Wavedash fast fall logic
+    if (this.isWavedashing && !this.onGround) {
+      const playerUp = this.yawObject.position.clone().normalize();
+      const horizontalVel = this.velocity.clone().projectOnPlane(playerUp);
+      const fastFallVerticalVelocity = playerUp.clone().negate().multiplyScalar(this.options.wavedashFastFallSpeed);
+      
+      this.velocity.copy(horizontalVel).add(fastFallVerticalVelocity);
+  
+      // Optional: Cap wavedash speed to prevent extreme velocities if needed
+      // const maxWavedashSpeed = 100; 
+      // if (this.velocity.lengthSq() > maxWavedashSpeed * maxWavedashSpeed) {
+      //   this.velocity.normalize().multiplyScalar(maxWavedashSpeed);
+      // }
     }
     
     // Apply velocity to position
@@ -493,6 +558,54 @@ export default class SphereControls {
           // Remove downward component
           this.velocity.addScaledVector(upDir, -verticalVel);
         }
+
+        // Wavedash landing logic
+        if (this.isWavedashing && this.options.canWavedash) {
+          const playerUp = this.yawObject.position.clone().normalize();
+          const moveInput = new THREE.Vector3(0,0,0);
+
+          if (this.keys['w']) moveInput.z -= 1;
+          if (this.keys['d']) moveInput.x += 1;
+          if (this.keys['a']) moveInput.x -= 1;
+          // 's' is checked separately if no other directional keys are pressed
+
+          let boostDir = null;
+
+          if (moveInput.lengthSq() > 0.001) { // W, A, or D are pressed
+              moveInput.normalize();
+              const forwardVec = new THREE.Vector3(0, 0, -1);
+              forwardVec.applyQuaternion(this.yawObject.quaternion);
+              forwardVec.sub(playerUp.clone().multiplyScalar(forwardVec.dot(playerUp))).normalize();
+              const rightVec = new THREE.Vector3().crossVectors(forwardVec, playerUp).normalize();
+              
+              boostDir = new THREE.Vector3(0,0,0);
+              if (moveInput.x !== 0) boostDir.addScaledVector(rightVec, moveInput.x);
+              if (moveInput.z !== 0) boostDir.addScaledVector(forwardVec, -moveInput.z);
+              if (boostDir.lengthSq() > 0.001) boostDir.normalize(); else boostDir = null;
+          } else if (this.keys['s']) { // Only 'S' (trigger key) is held
+              const backwardVec = new THREE.Vector3(0, 0, 1); // Player local +Z
+              backwardVec.applyQuaternion(this.yawObject.quaternion);
+              backwardVec.sub(playerUp.clone().multiplyScalar(backwardVec.dot(playerUp))).normalize();
+              boostDir = backwardVec;
+          } else { // Default: No W,A,D,S pressed, boost forward
+              const forwardVec = new THREE.Vector3(0, 0, -1);
+              forwardVec.applyQuaternion(this.yawObject.quaternion);
+              forwardVec.sub(playerUp.clone().multiplyScalar(forwardVec.dot(playerUp))).normalize();
+              boostDir = forwardVec;
+          }
+
+          if (boostDir && boostDir.lengthSq() > 0.001) {
+              const currentVerticalVelocityComponent = playerUp.clone().multiplyScalar(this.velocity.dot(playerUp));
+              this.velocity.copy(boostDir).multiplyScalar(this.options.wavedashBoostFactor);
+              this.velocity.add(currentVerticalVelocityComponent);
+              console.log("Wavedash executed! Boost speed:", this.options.wavedashBoostFactor);
+          }
+          this.isWavedashing = false;
+        } else {
+           // Ensure flag is reset if we land normally while it was somehow true
+           if(this.isWavedashing) this.isWavedashing = false;
+        }
+
       } else {
         // Already on ground, just maintain exact distance
         pos.normalize().multiplyScalar(terrainRadius + this.playerHeightOffset);
@@ -736,6 +849,27 @@ export default class SphereControls {
     
     // Start transition animation
     this.crouchTransition = requestAnimationFrame(animateStand);
+  }
+
+  // Add Wavedash control methods
+  startWavedash(downwardSpeed) {
+    if (!this.options.canWavedash || this.onGround || this.isWavedashing) return;
+    this.isWavedashing = true;
+    
+    const playerUp = this.yawObject.position.clone().normalize();
+    // Preserve horizontal velocity, set vertical velocity to downwardSpeed
+    const horizontalVelocity = this.velocity.clone().projectOnPlane(playerUp);
+    const downwardVelocity = playerUp.clone().negate().multiplyScalar(downwardSpeed);
+    
+    this.velocity.copy(horizontalVelocity).add(downwardVelocity);
+    console.log("Wavedash: Fast fall initiated with speed", downwardSpeed);
+  }
+
+  cancelWavedash() {
+    if (this.isWavedashing) {
+      this.isWavedashing = false;
+      console.log("Wavedash: Fast fall cancelled");
+    }
   }
 
   // Toggle crouching state
