@@ -42,6 +42,23 @@ const BIRD_CONFIG = {
   respawnTime: 15000           // Time in ms before respawning birds
 };
 
+// *** PLAYER CONFIGURATION ***
+const playerConfig = {
+  startPosition: new THREE.Vector3(0, 1, 0).normalize(), // Position at north pole
+  startElevation: 3,
+  eyeHeight: 12, 
+  moveSpeed: 18.0,    // INCREASED from 16.0 to 18.0 for faster movement
+  lookSpeed: 0.002,
+  playerRadius: 6.0, // Collision radius remains the same
+  debugMode: false, // Set to true to see player collision body
+  sphereRadius: R,
+  // *** USE THE FULL TERRAIN HEIGHT FUNCTION ***
+  getTerrainHeight: getFullTerrainHeight,
+  collidables: collidables,
+  // Increase far clipping plane to see distant clouds
+  cameraFarPlane: 10000, // Add this parameter to see clouds from far away
+};
+
 // FIXED: Declare shared variables at the top level
 let player;
 let fxManager;
@@ -141,6 +158,14 @@ scene.background = new THREE.Color(0x87CEEB); // Sky Blue
 // ADDED: Instantiate DebugUtils after scene is created
 debugUtils = new DebugUtils(scene);
 window.debugUtils = debugUtils; // Make it accessible globally for console commands
+
+// Create FPS monitor early in the script
+const fpsMonitor = new FPSMonitor({
+  showDisplay: true,
+  warningThreshold: 40,
+  criticalThreshold: 25,
+  autoOptimize: true
+});
 
 // --- Resize Handler ---
 function onWindowResize() {
@@ -267,6 +292,61 @@ const fallenApples = [];
 // Track pine tree positions passed from world_objects.js
 let pineTrees = [];
 
+// *** PHYSICS MASTER CONTROLS ***
+// Add global physics controls that can be adjusted
+const physics = {
+  gravity: 0.2,          // Maintained strong gravity (increased from 0.15)
+  jumpStrength: 4.5,     // Significantly increased jump strength (from 1.0)
+  maxJumps: 2,            // Number of jumps allowed (2 = double jump)
+  
+  // Method to update the controls when these values change
+  updateControls() {
+    if (!player) return;
+    
+    // Update player physics values
+    player.updatePhysics({
+      gravity: this.gravity,
+      jumpStrength: this.jumpStrength,
+      maxJumps: this.maxJumps
+    });
+    
+    console.log(`Physics updated: gravity=${this.gravity}, jumpStrength=${this.jumpStrength}, maxJumps=${this.maxJumps}`);
+  },
+  
+  // Convenient methods to adjust values
+  setGravity(value) {
+    this.gravity = value;
+    this.updateControls();
+    return this.gravity;
+  },
+  
+  setJumpStrength(value) {
+    this.jumpStrength = value;
+    this.updateControls();
+    return this.jumpStrength;
+  },
+  
+  // Adjust values by percentage
+  adjustGravity(percentage) {
+    this.gravity *= (1 + percentage/100);
+    this.updateControls();
+    return this.gravity;
+  },
+  
+  adjustJumpStrength(percentage) {
+    this.jumpStrength *= (1 + percentage/100);
+    this.updateControls();
+    return this.jumpStrength;
+  },
+
+  // New method to set max jumps
+  setMaxJumps(value) {
+    this.maxJumps = Math.max(1, Math.floor(value));
+    this.updateControls();
+    return this.maxJumps;
+  },
+};
+
 // Modified initEnvironment to export placeOnSphere function and pine tree positions
 initEnvironment(scene, 'medium', worldConfig, (placerFunc, pineTreePositions) => {
   placeOnSphereFunc = placerFunc;
@@ -282,9 +362,222 @@ initEnvironment(scene, 'medium', worldConfig, (placerFunc, pineTreePositions) =>
   
   // After world is built, add low-poly details
   enhanceEnvironment();
-});
+  debug(`World built with ${collidables.length} collidable objects`); // Moved and consolidated debug message
 
-debug(`World built with ${collidables.length} collidable objects`);
+  // Now initialize the player with the fully built world
+  player = new Player(scene, canvas, {
+    ...playerConfig,
+    // Connect physics to player
+    jumpStrength: physics.jumpStrength,
+    gravity: physics.gravity,
+    maxJumps: physics.maxJumps
+  });
+
+  // Give player some initial ammo after creation
+  if (player && player.addAmmo) {
+    player.addAmmo('red', 10); // Start with 10 red apples
+    console.log("Initial ammo provided: 10 red apples");
+  }
+
+  // CRITICAL FIX: Make sure we set collidables directly and consistently
+  if (player?.weaponSystem?.projectileSystem) {
+    console.log(`Setting up projectile collisions with ${collidables.length} objects`);
+    player.weaponSystem.projectileSystem.options.collidables = collidables;
+    
+    // Enable collision effects
+    player.weaponSystem.projectileSystem.options.showCollisions = true;
+    player.weaponSystem.projectileSystem.options.splashParticleCount = 5;
+  }
+  
+  // Initialize player UI including weapon controls
+  initializePlayerUI();
+  
+  // Register apple system optimizer AFTER fpsMonitor is created
+  fpsMonitor.registerOptimizer((level) => {
+    // *** Access appleSystem via the global manager ***
+    const currentAppleSystem = window.appleGrowthMgr?.appleSystem;
+    if (!currentAppleSystem) {
+        console.warn("[FPS Optimizer] AppleSystem not available for optimization.");
+        return; // Exit if apple system isn't ready
+    }
+
+    try { // Add try...catch for safety
+        if (level === 1) {
+          // First level optimization
+          // if (window.applePerformance) window.applePerformance.low(); // Remove if applePerformance doesn't exist
+
+          // Reduce max apples
+          currentAppleSystem.options.maxApplesPerTree = 3;
+          console.log("[FPS Optimizer L1] Reduced max apples per tree to 3.");
+
+        } else if (level === 2) {
+          // Second level optimization - drastic measures
+          currentAppleSystem.options.maxApplesPerTree = 2;
+          currentAppleSystem.options.growthProbability *= 0.5;
+          currentAppleSystem.options.fallProbability *= 0.5;
+          console.log("[FPS Optimizer L2] Reduced max apples, growth, and fall probability.");
+
+        } else if (level >= 3) {
+          // Critical optimization - clear most apples
+          // if (window.applePerformance) window.applePerformance.clearAll(); // Remove if applePerformance doesn't exist
+          currentAppleSystem.options.maxApplesPerTree = 1;
+          currentAppleSystem.options.growthProbability = 0.001; // Almost zero growth
+          currentAppleSystem.options.fallProbability = 0.001;
+          console.log("[FPS Optimizer L3+] Critically reduced apple system activity.");
+          // Optionally, clear existing apples:
+          // currentAppleSystem.cleanup(); // Or a less drastic clear method if available
+        }
+    } catch (e) {
+        console.error("Error applying apple system optimization:", e);
+    }
+  });
+  
+  // Add crosshair system initialization - ADD THIS AFTER PLAYER CREATION
+  const crosshairSystem = new CrosshairSystem({
+    color: 'rgba(255, 255, 255, 0.8)',
+    size: 14,
+    thickness: 1.5,
+    dotSize: 2,
+    gap: 5,
+    chargeIndicator: true
+  });
+  
+  // Make crosshair and charge indicator available globally for other systems
+  window.crosshairSystem = crosshairSystem;
+  
+  // Initialize and start apple growth manager
+  const appleGrowthMgr = new AppleGrowthManager(
+    scene,
+    getFullTerrainHeight,       // imported from world_objects.js
+    // FIX FOR APPLE COLLECTION: Always add exactly 1 per pickup
+    (type, value, effectMultiplier, pos) => { 
+      if (player) {
+        const ammoType = type; // Types should directly match ("red", "yellow", "green")
+        
+        // CRITICAL FIX: Always add exactly 1 per apple collected, regardless of type or value
+        const amountToAdd = 1; // Force to exactly 1
+        
+        console.log(`[AppleCollection] Adding exactly 1 ${ammoType} apple to inventory (ignoring value=${value})`);
+        
+        // Add ammo directly to player inventory - ALWAYS ADD 1
+        player.addAmmo(ammoType, amountToAdd);
+        
+        // CRITICAL FIX: Immediately update the ammo display in the UI
+        if (player.weaponSystem && typeof player.weaponSystem._updateAmmoDisplay === 'function') {
+          player.weaponSystem._updateAmmoDisplay();
+          
+          // Also force the model update to show the correct apple in the slingshot
+          if (typeof player.weaponSystem.updateModel === 'function') {
+            player.weaponSystem.updateModel();
+          }
+        }
+        
+        // Log inventory status to verify it's working
+        const weaponState = player.getWeaponState();
+        console.log(`[AppleCollection] Current inventory: red=${weaponState.ammo.red}, yellow=${weaponState.ammo.yellow}, green=${weaponState.ammo.green}`);
+      }
+    },
+    { speedMultiplier: 5 } // start 5× faster
+  );
+  window.appleGrowthMgr = appleGrowthMgr;  // expose for console
+  appleGrowthMgr.init();
+
+  // Initialize the bird system with the planet radius
+  birdSystem = createBirdSystem(scene, {
+    radius: R, // Pass the planet radius
+    count: 15  // Spawn more birds than default
+  });
+  
+  // Expose the bird system globally for console debugging
+  window.birdSystem = birdSystem;
+
+  // Hook up bird collision detection to projectile system
+  if (player?.weaponSystem?.projectileSystem) {
+    const originalCheckCollision = player.weaponSystem.projectileSystem.checkCollision;
+    
+    // Override collision check to include birds
+    player.weaponSystem.projectileSystem.checkCollision = function(projectile) {
+      // First check bird collisions
+      const birdCollision = birdSystem.checkCollision(projectile);
+      if (birdCollision) {
+        // Create hit effect at collision point
+        if (fxManager) {
+          fxManager.createExplosion(birdCollision.position, 0.5, 
+            birdCollision.hitArea === 'head' ? 0xff0000 : 0xffaa00);
+        }
+        return true; // Collision happened, stop projectile
+      }
+      
+      // If no bird collision, proceed with original collision check
+      return originalCheckCollision.call(this, projectile);
+    };
+  }
+  
+  // Initialize the deer system right after player is created
+  // instead of using setTimeout later
+  deerSystem = initDeerSystem();
+  console.log("Deer system initialized");
+  console.log(`Created ${deerSystem.deer.length} deer`);
+  window.deerSystem = deerSystem;
+  
+  // Define the desired cloud options (distant preset) *before* creating the system
+  const distantCloudOptions = {
+    count: 100,
+    minRadius: 2500, // INCREASED: Further out (from 2000)
+    maxRadius: 3800, // INCREASED: Further out (from 3000)
+    minScale: 90,    // Slightly larger scale for distance
+    maxScale: 170,   // Slightly larger scale for distance
+    rotationSpeed: 0.0007, // Slightly slower for distance effect (from 0.0009)
+    opacity: 0.85,   // Slightly less opaque for distance
+    distribution: 0.4,
+    sphereRadius: R, // Ensure sphereRadius is passed
+    // UPDATED: Specify the path to your SINGLE skybox texture file
+    skyboxTexturePath: 'static/images/StandardCubeMap.png', // ADJUST FILENAME AND PATH
+
+    // New Surface Fog Options
+    enableSurfaceFog: true, // Enable the new surface fog
+    surfaceFogPoofCount: 2000, // INCREASED from 50 to 80 for more clusters
+    surfaceFogParticlesPerPoof: 260, // SLIGHTLY DECREASED from 200 to balance density
+    surfaceFogPoofRadius: 2500, // INCREASED from 35 to 50 for more spread
+    surfaceFogPoofHeight: 20, // Vertical height of each poof
+    surfaceFogParticleSize: 2500, // SLIGHTLY INCREASED from 25 for a bit more presence
+    surfaceFogParticleColor: 0xd0e4fe, // Brighter, slightly bluish white for glow
+    surfaceFogParticleOpacity: 0.010, // SLIGHTLY INCREASED from 0.04 for more glow
+    surfaceFogRiseSpeed: 0.25,
+    surfaceFogTexturePath: 'static/images/soft_particle.png', // <-- ADD TEXTURE PATH
+    // surfaceFogSphereRadius will default to options.sphereRadius (which is R)
+  };
+  console.log("[Main] Using distant cloud options for initial creation:", distantCloudOptions);
+
+  // Initialize Cloud System directly with the distant preset options
+  cloudSystem = new CloudSystem(scene, distantCloudOptions);
+  
+  // Explicitly call init() *after* creating the instance with the correct options
+  cloudSystem.init(); 
+  console.log("[Main] CloudSystem explicitly initialized with distant options.");
+
+  // Start animation loop after player and cloud system are created and initialized
+  animate();
+  
+  // Ensure camera far plane is adjusted to see distant clouds
+  // Add this right after player creation
+  if (player && player.camera) {
+    player.camera.far = playerConfig.cameraFarPlane || 10000;
+    player.camera.updateProjectionMatrix();
+    console.log(`Camera far plane set to: ${player.camera.far}`);
+  }
+
+  // Apply speed boost *after* initialization is fully complete
+  setTimeout(() => {
+    if (cloudSystem && cloudSystem.setOrbitSpeed) {
+      cloudSystem.setOrbitSpeed(4.0); // Adjusted speed boost (from 5.0)
+      console.log("[Main] Cloud movement speed adjusted post-initialization.");
+    }
+  }, cloudSystem.initializationTime + 500); // Wait for initialization + buffer
+
+  // Set up debug UI after FX manager is ready
+  setupDebugUI();
+});
 
 // Enhance environment with low-poly details
 function enhanceEnvironment() {
@@ -514,319 +807,8 @@ function enhanceEnvironment() {
   }
 }
 
-// *** PHYSICS MASTER CONTROLS ***
-// Add global physics controls that can be adjusted
-const physics = {
-  gravity: 0.2,          // Maintained strong gravity (increased from 0.15)
-  jumpStrength: 4.5,     // Significantly increased jump strength (from 1.0)
-  maxJumps: 2,            // Number of jumps allowed (2 = double jump)
-  
-  // Method to update the controls when these values change
-  updateControls() {
-    if (!player) return;
-    
-    // Update player physics values
-    player.updatePhysics({
-      gravity: this.gravity,
-      jumpStrength: this.jumpStrength,
-      maxJumps: this.maxJumps
-    });
-    
-    console.log(`Physics updated: gravity=${this.gravity}, jumpStrength=${this.jumpStrength}, maxJumps=${this.maxJumps}`);
-  },
-  
-  // Convenient methods to adjust values
-  setGravity(value) {
-    this.gravity = value;
-    this.updateControls();
-    return this.gravity;
-  },
-  
-  setJumpStrength(value) {
-    this.jumpStrength = value;
-    this.updateControls();
-    return this.jumpStrength;
-  },
-  
-  // Adjust values by percentage
-  adjustGravity(percentage) {
-    this.gravity *= (1 + percentage/100);
-    this.updateControls();
-    return this.gravity;
-  },
-  
-  adjustJumpStrength(percentage) {
-    this.jumpStrength *= (1 + percentage/100);
-    this.updateControls();
-    return this.jumpStrength;
-  },
-
-  // New method to set max jumps
-  setMaxJumps(value) {
-    this.maxJumps = Math.max(1, Math.floor(value));
-    this.updateControls();
-    return this.maxJumps;
-  },
-};
-
-// *** PLAYER CONFIGURATION ***
-const playerConfig = {
-  startPosition: new THREE.Vector3(0, 1, 0).normalize(), // Position at north pole
-  startElevation: 3,
-  eyeHeight: 12, 
-  moveSpeed: 18.0,    // INCREASED from 16.0 to 18.0 for faster movement
-  lookSpeed: 0.002,
-  playerRadius: 6.0, // Collision radius remains the same
-  debugMode: false, // Set to true to see player collision body
-  sphereRadius: R,
-  // *** USE THE FULL TERRAIN HEIGHT FUNCTION ***
-  getTerrainHeight: getFullTerrainHeight,
-  collidables: collidables,
-  // Increase far clipping plane to see distant clouds
-  cameraFarPlane: 10000, // Add this parameter to see clouds from far away
-};
-
 // --- Initialize World & Player ---
 debug("Building world...");
-
-// Create FPS monitor early in the script
-const fpsMonitor = new FPSMonitor({
-  showDisplay: true,
-  warningThreshold: 40,
-  criticalThreshold: 25,
-  autoOptimize: true
-});
-
-// Initialize player after world is built
-initEnvironment(scene, 'medium', worldConfig, (placerFunc, pineTreePositions) => {
-  placeOnSphereFunc = placerFunc;
-  
-  // Store pine tree positions for apple tree spacing
-  if (pineTreePositions && pineTreePositions.length > 0) {
-    pineTrees = collidables.filter(obj => 
-      obj.mesh?.name === "PineTree" || 
-      obj.mesh?.userData?.isPineTree
-    );
-    debug(`Received ${pineTrees.length} pine tree positions for spacing`);
-  }
-  
-  // After world is built, add low-poly details
-  enhanceEnvironment();
-  
-  // Now initialize the player with the fully built world
-  player = new Player(scene, canvas, {
-    ...playerConfig,
-    // Connect physics to player
-    jumpStrength: physics.jumpStrength,
-    gravity: physics.gravity,
-    maxJumps: physics.maxJumps
-  });
-
-  // Give player some initial ammo after creation
-  if (player && player.addAmmo) {
-    player.addAmmo('red', 10); // Start with 10 red apples
-    console.log("Initial ammo provided: 10 red apples");
-  }
-
-  // CRITICAL FIX: Make sure we set collidables directly and consistently
-  if (player?.weaponSystem?.projectileSystem) {
-    console.log(`Setting up projectile collisions with ${collidables.length} objects`);
-    player.weaponSystem.projectileSystem.options.collidables = collidables;
-    
-    // Enable collision effects
-    player.weaponSystem.projectileSystem.options.showCollisions = true;
-    player.weaponSystem.projectileSystem.options.splashParticleCount = 5;
-  }
-  
-  // Initialize player UI including weapon controls
-  initializePlayerUI();
-  
-  // Register apple system optimizer AFTER fpsMonitor is created
-  fpsMonitor.registerOptimizer((level) => {
-    // *** Access appleSystem via the global manager ***
-    const currentAppleSystem = window.appleGrowthMgr?.appleSystem;
-    if (!currentAppleSystem) {
-        console.warn("[FPS Optimizer] AppleSystem not available for optimization.");
-        return; // Exit if apple system isn't ready
-    }
-
-    try { // Add try...catch for safety
-        if (level === 1) {
-          // First level optimization
-          // if (window.applePerformance) window.applePerformance.low(); // Remove if applePerformance doesn't exist
-
-          // Reduce max apples
-          currentAppleSystem.options.maxApplesPerTree = 3;
-          console.log("[FPS Optimizer L1] Reduced max apples per tree to 3.");
-
-        } else if (level === 2) {
-          // Second level optimization - drastic measures
-          currentAppleSystem.options.maxApplesPerTree = 2;
-          currentAppleSystem.options.growthProbability *= 0.5;
-          currentAppleSystem.options.fallProbability *= 0.5;
-          console.log("[FPS Optimizer L2] Reduced max apples, growth, and fall probability.");
-
-        } else if (level >= 3) {
-          // Critical optimization - clear most apples
-          // if (window.applePerformance) window.applePerformance.clearAll(); // Remove if applePerformance doesn't exist
-          currentAppleSystem.options.maxApplesPerTree = 1;
-          currentAppleSystem.options.growthProbability = 0.001; // Almost zero growth
-          currentAppleSystem.options.fallProbability = 0.001;
-          console.log("[FPS Optimizer L3+] Critically reduced apple system activity.");
-          // Optionally, clear existing apples:
-          // currentAppleSystem.cleanup(); // Or a less drastic clear method if available
-        }
-    } catch (e) {
-        console.error("Error applying apple system optimization:", e);
-    }
-  });
-  
-  // Add crosshair system initialization - ADD THIS AFTER PLAYER CREATION
-  const crosshairSystem = new CrosshairSystem({
-    color: 'rgba(255, 255, 255, 0.8)',
-    size: 14,
-    thickness: 1.5,
-    dotSize: 2,
-    gap: 5,
-    chargeIndicator: true
-  });
-  
-  // Make crosshair and charge indicator available globally for other systems
-  window.crosshairSystem = crosshairSystem;
-  
-  // Initialize and start apple growth manager
-  const appleGrowthMgr = new AppleGrowthManager(
-    scene,
-    getFullTerrainHeight,       // imported from world_objects.js
-    // FIX FOR APPLE COLLECTION: Always add exactly 1 per pickup
-    (type, value, effectMultiplier, pos) => { 
-      if (player) {
-        const ammoType = type; // Types should directly match ("red", "yellow", "green")
-        
-        // CRITICAL FIX: Always add exactly 1 per apple collected, regardless of type or value
-        const amountToAdd = 1; // Force to exactly 1
-        
-        console.log(`[AppleCollection] Adding exactly 1 ${ammoType} apple to inventory (ignoring value=${value})`);
-        
-        // Add ammo directly to player inventory - ALWAYS ADD 1
-        player.addAmmo(ammoType, amountToAdd);
-        
-        // CRITICAL FIX: Immediately update the ammo display in the UI
-        if (player.weaponSystem && typeof player.weaponSystem._updateAmmoDisplay === 'function') {
-          player.weaponSystem._updateAmmoDisplay();
-          
-          // Also force the model update to show the correct apple in the slingshot
-          if (typeof player.weaponSystem.updateModel === 'function') {
-            player.weaponSystem.updateModel();
-          }
-        }
-        
-        // Log inventory status to verify it's working
-        const weaponState = player.getWeaponState();
-        console.log(`[AppleCollection] Current inventory: red=${weaponState.ammo.red}, yellow=${weaponState.ammo.yellow}, green=${weaponState.ammo.green}`);
-      }
-    },
-    { speedMultiplier: 5 } // start 5× faster
-  );
-  window.appleGrowthMgr = appleGrowthMgr;  // expose for console
-  appleGrowthMgr.init();
-
-  // Initialize the bird system with the planet radius
-  birdSystem = createBirdSystem(scene, {
-    radius: R, // Pass the planet radius
-    count: 15  // Spawn more birds than default
-  });
-  
-  // Expose the bird system globally for console debugging
-  window.birdSystem = birdSystem;
-
-  // Hook up bird collision detection to projectile system
-  if (player?.weaponSystem?.projectileSystem) {
-    const originalCheckCollision = player.weaponSystem.projectileSystem.checkCollision;
-    
-    // Override collision check to include birds
-    player.weaponSystem.projectileSystem.checkCollision = function(projectile) {
-      // First check bird collisions
-      const birdCollision = birdSystem.checkCollision(projectile);
-      if (birdCollision) {
-        // Create hit effect at collision point
-        if (fxManager) {
-          fxManager.createExplosion(birdCollision.position, 0.5, 
-            birdCollision.hitArea === 'head' ? 0xff0000 : 0xffaa00);
-        }
-        return true; // Collision happened, stop projectile
-      }
-      
-      // If no bird collision, proceed with original collision check
-      return originalCheckCollision.call(this, projectile);
-    };
-  }
-  
-  // Initialize the deer system right after player is created
-  // instead of using setTimeout later
-  deerSystem = initDeerSystem();
-  console.log("Deer system initialized");
-  console.log(`Created ${deerSystem.deer.length} deer`);
-  window.deerSystem = deerSystem;
-  
-  // Define the desired cloud options (distant preset) *before* creating the system
-  const distantCloudOptions = {
-    count: 100,
-    minRadius: 2500, // INCREASED: Further out (from 2000)
-    maxRadius: 3800, // INCREASED: Further out (from 3000)
-    minScale: 90,    // Slightly larger scale for distance
-    maxScale: 170,   // Slightly larger scale for distance
-    rotationSpeed: 0.0007, // Slightly slower for distance effect (from 0.0009)
-    opacity: 0.85,   // Slightly less opaque for distance
-    distribution: 0.4,
-    sphereRadius: R, // Ensure sphereRadius is passed
-    // UPDATED: Specify the path to your SINGLE skybox texture file
-    skyboxTexturePath: 'static/images/StandardCubeMap.png', // ADJUST FILENAME AND PATH
-
-    // New Surface Fog Options
-    enableSurfaceFog: true, // Enable the new surface fog
-    surfaceFogPoofCount: 2000, // INCREASED from 50 to 80 for more clusters
-    surfaceFogParticlesPerPoof: 260, // SLIGHTLY DECREASED from 200 to balance density
-    surfaceFogPoofRadius: 2500, // INCREASED from 35 to 50 for more spread
-    surfaceFogPoofHeight: 20, // Vertical height of each poof
-    surfaceFogParticleSize: 2500, // SLIGHTLY INCREASED from 25 for a bit more presence
-    surfaceFogParticleColor: 0xd0e4fe, // Brighter, slightly bluish white for glow
-    surfaceFogParticleOpacity: 0.010, // SLIGHTLY INCREASED from 0.04 for more glow
-    surfaceFogRiseSpeed: 0.25,
-    surfaceFogTexturePath: 'static/images/soft_particle.png', // <-- ADD TEXTURE PATH
-    // surfaceFogSphereRadius will default to options.sphereRadius (which is R)
-  };
-  console.log("[Main] Using distant cloud options for initial creation:", distantCloudOptions);
-
-  // Initialize Cloud System directly with the distant preset options
-  cloudSystem = new CloudSystem(scene, distantCloudOptions);
-  
-  // Explicitly call init() *after* creating the instance with the correct options
-  cloudSystem.init(); 
-  console.log("[Main] CloudSystem explicitly initialized with distant options.");
-
-  // Start animation loop after player and cloud system are created and initialized
-  animate();
-  
-  // Ensure camera far plane is adjusted to see distant clouds
-  // Add this right after player creation
-  if (player && player.camera) {
-    player.camera.far = playerConfig.cameraFarPlane || 10000;
-    player.camera.updateProjectionMatrix();
-    console.log(`Camera far plane set to: ${player.camera.far}`);
-  }
-
-  // Apply speed boost *after* initialization is fully complete
-  setTimeout(() => {
-    if (cloudSystem && cloudSystem.setOrbitSpeed) {
-      cloudSystem.setOrbitSpeed(4.0); // Adjusted speed boost (from 5.0)
-      console.log("[Main] Cloud movement speed adjusted post-initialization.");
-    }
-  }, cloudSystem.initializationTime + 500); // Wait for initialization + buffer
-
-  // Set up debug UI after FX manager is ready
-  setupDebugUI();
-});
 
 // Remove particle setup - commenting out
 // Initialize FX Manager AFTER controls are created

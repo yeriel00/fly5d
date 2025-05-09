@@ -18,17 +18,56 @@ export default class SphereControls {
     this.playerHeightOffset = options.playerHeightOffset || 0.35;
     this.cameraHeight = options.eyeHeight || 6.6;
 
-    // Wavedash options
-    this.options = Object.assign({
-      // ... existing options like crouchHeight etc.
-      canWavedash: options.canWavedash !== undefined ? options.canWavedash : true,
-      wavedashBoostFactor: options.wavedashBoostFactor || 30.0,
-      wavedashFastFallSpeed: options.wavedashFastFallSpeed || 60.0, // Added fast fall speed
+    // Define default options
+    const defaultOptions = {
+      canWavedash: true,
+      wavedashBoostFactor: 45.0,
+      wavedashFastFallSpeed: 100.0,
       crouchHeight: 0.5,
       crouchSpeedMultiplier: 0.7,
       crouchTransitionTime: 0.2,
-      getSpeedMultiplier: () => 1.0
-    }, options);
+      getSpeedMultiplier: () => 1.0,
+      // Include other options that might be managed via this.options if any
+      // For now, these match the keys from the original Object.assign structure
+    };
+
+    // Initialize this.options by merging defaults with provided options
+    // Options passed to the constructor will override defaults.
+    this.options = { ...defaultOptions, ...options };
+
+    // Validate and sanitize critical numeric options in this.options
+    // Wavedash options
+    if (typeof this.options.wavedashFastFallSpeed !== 'number' || isNaN(this.options.wavedashFastFallSpeed) || this.options.wavedashFastFallSpeed <= 0) {
+      // console.warn(`SphereControls: Correcting invalid wavedashFastFallSpeed. Was: ${this.options.wavedashFastFallSpeed}, Defaulting to: ${defaultOptions.wavedashFastFallSpeed}`);
+      this.options.wavedashFastFallSpeed = defaultOptions.wavedashFastFallSpeed;
+    }
+    if (typeof this.options.wavedashBoostFactor !== 'number' || isNaN(this.options.wavedashBoostFactor) || this.options.wavedashBoostFactor <= 0) {
+      // console.warn(`SphereControls: Correcting invalid wavedashBoostFactor. Was: ${this.options.wavedashBoostFactor}, Defaulting to: ${defaultOptions.wavedashBoostFactor}`);
+      this.options.wavedashBoostFactor = defaultOptions.wavedashBoostFactor;
+    }
+    // Crouch options
+    if (typeof this.options.crouchHeight !== 'number' || isNaN(this.options.crouchHeight) || this.options.crouchHeight <= 0 || this.options.crouchHeight >= 1) {
+      // console.warn(`SphereControls: Correcting invalid crouchHeight. Was: ${this.options.crouchHeight}, Defaulting to: ${defaultOptions.crouchHeight}`);
+      this.options.crouchHeight = defaultOptions.crouchHeight;
+    }
+    if (typeof this.options.crouchSpeedMultiplier !== 'number' || isNaN(this.options.crouchSpeedMultiplier) || this.options.crouchSpeedMultiplier <= 0 || this.options.crouchSpeedMultiplier > 1) {
+      // console.warn(`SphereControls: Correcting invalid crouchSpeedMultiplier. Was: ${this.options.crouchSpeedMultiplier}, Defaulting to: ${defaultOptions.crouchSpeedMultiplier}`);
+      this.options.crouchSpeedMultiplier = defaultOptions.crouchSpeedMultiplier;
+    }
+    if (typeof this.options.crouchTransitionTime !== 'number' || isNaN(this.options.crouchTransitionTime) || this.options.crouchTransitionTime < 0) {
+      // console.warn(`SphereControls: Correcting invalid crouchTransitionTime. Was: ${this.options.crouchTransitionTime}, Defaulting to: ${defaultOptions.crouchTransitionTime}`);
+      this.options.crouchTransitionTime = defaultOptions.crouchTransitionTime;
+    }
+    // Boolean option
+    if (typeof this.options.canWavedash !== 'boolean') {
+        // console.warn(`SphereControls: Correcting invalid canWavedash. Was: ${this.options.canWavedash}, Defaulting to: ${defaultOptions.canWavedash}`);
+        this.options.canWavedash = defaultOptions.canWavedash;
+    }
+    // Ensure getSpeedMultiplier is a function
+    if (typeof this.options.getSpeedMultiplier !== 'function') {
+        // console.warn(`SphereControls: Correcting invalid getSpeedMultiplier. Defaulting.`);
+        this.options.getSpeedMultiplier = defaultOptions.getSpeedMultiplier;
+    }
 
     // build yaw->pitch->camera hierarchy
     this.yawObject = new THREE.Object3D();
@@ -65,8 +104,9 @@ export default class SphereControls {
     this.yawObject.lookAt(startPos.clone().add(forward0));
 
     // input state
-    this.keys = {};
+    this.keys = {}; // Initialize as an empty object for general key states
     this.pitch = 0;
+    this.shiftProcessedKeyDown = false; // For Shift key single press vs. hold logic
 
     // bind
     this.onKeyDown = this.onKeyDown.bind(this);
@@ -120,14 +160,6 @@ export default class SphereControls {
 
     // Wavedash state
     this.isWavedashing = false;
-
-    // Add crouch options to the constructor
-    this.options = Object.assign({
-      crouchHeight: 0.5, // Height multiplier when crouching (50% of normal height)
-      crouchSpeedMultiplier: 0.7, // Movement is 70% speed when crouching
-      crouchTransitionTime: 0.2, // Seconds to transition to/from crouch
-      getSpeedMultiplier: () => 1.0 // Default function returns 1x speed
-    }, options);
 
     // Add crouch state properties
     this.isCrouching = false;
@@ -245,26 +277,24 @@ export default class SphereControls {
       }
     }
 
-    // Add crouch key handling
-    if ((e.key === 'Shift' && (e.code === 'ShiftLeft' || e.keyCode === 16))) {
-      // Original crouch initiation logic (using this.keys.crouching as a specific state flag)
-      if (!this.keys.crouching) { 
-        this.keys.crouching = true; 
-        
+    // Crouch and Wavedash initiation (Shift or S)
+    if (key === 'shift' && (e.code === 'ShiftLeft' || e.keyCode === 16)) {
+      if (!this.shiftProcessedKeyDown) {
+        this.shiftProcessedKeyDown = true;
         const now = Date.now();
-        if (now - this.lastCrouchTime < 300) { // 300ms for double-tap detection
-          this.crouchToggled = !this.crouchToggled;
+        if (now - this.lastCrouchTime < 300) { // Double-tap Shift
+          this.toggleCrouch();
+        } else { // Single-tap Shift
+          if (!this.crouchToggled) { // If in hold-to-crouch mode
+            this.startCrouch();
+          }
         }
-        this.lastCrouchTime = now;
-        
-        this.startCrouch(this.crouchToggled);
+        this.lastCrouchTime = now; // Record time of this shift press for next double-tap check
       }
-
-      // REMOVED: Direct call to startWavedash based on Shift key
-      // // If airborne and Shift is pressed/held, enable fast-fall (wavedash)
-      // if (!this.onGround && this.options.canWavedash) {
-      //   this.startWavedash();
-      // }
+    } else if (key === 's') {
+      if (!this.onGround && this.options.canWavedash && !this.isWavedashing) {
+        this.startWavedash(this.options.wavedashFastFallSpeed);
+      }
     }
   }
   
@@ -278,22 +308,16 @@ export default class SphereControls {
       console.log("Jump cooldown reset on key release");
     }
 
-    // Release crouch if not in toggle mode
-    if (e.key === 'Shift' && (e.code === 'ShiftLeft' || e.keyCode === 16)) {
-      // Original crouch release logic (using this.keys.crouching state flag)
-      if (this.keys.crouching) {
-        this.keys.crouching = false;
-        
-        if (!this.crouchToggled) {
-          this.stopCrouch();
-        }
+    // Crouch and Wavedash cancellation (Shift or S)
+    if (key === 'shift' && (e.code === 'ShiftLeft' || e.keyCode === 16)) {
+      this.shiftProcessedKeyDown = false; // Reset for the next press
+      if (!this.crouchToggled) { // If in hold-to-crouch mode
+        this.stopCrouch();
       }
-      
-      // REMOVED: Direct call to cancelWavedash based on Shift key
-      // // If releasing Shift while airborne and wavedashing, cancel wavedash (stop fast-fall)
-      // if (this.isWavedashing && !this.onGround) {
-      //   this.cancelWavedash();
-      // }
+    } else if (key === 's') {
+      if (this.isWavedashing) {
+        this.cancelWavedash();
+      }
     }
   }
 
@@ -744,16 +768,40 @@ export default class SphereControls {
 
   // Add helper method to apply crouch state
   _applyCrouchState() {
-    // Calculate height based on crouch amount
-    const fullHeight = this.originalCameraY || this.options.eyeHeight || 6.6;
-    const crouchHeight = fullHeight * this.options.crouchHeight;
-    const currentHeight = fullHeight - ((fullHeight - crouchHeight) * this.crouchAmount);
+    let fullHeight = this.originalCameraY;
+    // Ensure fullHeight is a valid positive number
+    if (typeof fullHeight !== 'number' || isNaN(fullHeight) || fullHeight <= 0) {
+      // console.warn(`SphereControls: Invalid originalCameraY (${this.originalCameraY}), defaulting to 6.6.`);
+      fullHeight = 6.6; 
+    }
     
-    // Set camera local Y position directly
-    this.camera.position.y = currentHeight;
+    let crouchHeightFactor = this.options.crouchHeight;
+    // Ensure crouchHeightFactor is a valid number (e.g., between 0 and 1), defaulting to 0.5
+    if (typeof crouchHeightFactor !== 'number' || isNaN(crouchHeightFactor) || crouchHeightFactor < 0 || crouchHeightFactor > 1) {
+      // console.warn(`SphereControls: Invalid crouchHeightFactor (${this.options.crouchHeight}), defaulting to 0.5.`);
+      crouchHeightFactor = 0.5;
+    }
+
+    const targetCrouchCamY = fullHeight * crouchHeightFactor;
+    // Lerp between fullHeight and targetCrouchCamY using this.crouchAmount
+    const currentHeight = fullHeight * (1 - this.crouchAmount) + targetCrouchCamY * this.crouchAmount;
+
+    // Final safety check for NaN before assignment
+    if (isNaN(currentHeight)) {
+      // console.error('SphereControls: currentHeight became NaN during crouch. Fallback to fullHeight.', {
+      //   originalFullHeight: this.originalCameraY,
+      //   calculatedFullHeight: fullHeight,
+      //   originalCrouchFactor: this.options.crouchHeight,
+      //   calculatedCrouchFactor: crouchHeightFactor,
+      //   crouchAmount: this.crouchAmount
+      // });
+      this.camera.position.y = fullHeight; // Fallback to standing height
+    } else {
+      this.camera.position.y = currentHeight;
+    }
     
-    // Store the current height for other systems to reference
-    this.cameraHeight = currentHeight;
+    // Store the actually set height for other systems to reference
+    this.cameraHeight = this.camera.position.y;
   }
 
   // Add crouch control methods
@@ -856,13 +904,18 @@ export default class SphereControls {
     if (!this.options.canWavedash || this.onGround || this.isWavedashing) return;
     this.isWavedashing = true;
     
+    // Ensure downwardSpeed is valid (use this.options.wavedashFastFallSpeed as fallback)
+    const actualSpeed = (typeof downwardSpeed === 'number' && !isNaN(downwardSpeed) && downwardSpeed > 0)
+      ? downwardSpeed 
+      : this.options.wavedashFastFallSpeed;
+    
     const playerUp = this.yawObject.position.clone().normalize();
     // Preserve horizontal velocity, set vertical velocity to downwardSpeed
     const horizontalVelocity = this.velocity.clone().projectOnPlane(playerUp);
-    const downwardVelocity = playerUp.clone().negate().multiplyScalar(downwardSpeed);
+    const downwardVelocity = playerUp.clone().negate().multiplyScalar(actualSpeed);
     
     this.velocity.copy(horizontalVelocity).add(downwardVelocity);
-    console.log("Wavedash: Fast fall initiated with speed", downwardSpeed);
+    console.log("Wavedash: Fast fall initiated with speed", actualSpeed);
   }
 
   cancelWavedash() {
