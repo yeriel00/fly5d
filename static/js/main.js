@@ -1026,6 +1026,10 @@ function animate(timestamp) {
     renderer.render(scene, player ? player.getCamera() : camera);
   }
   
+  // Assuming deerList is available in the scope
+  const deerList = deerSystem.deer; // Use the existing deerSystem variable
+  player.weaponSystem.projectileSystem.update(0.16, deerList);
+
   requestAnimationFrame(animate);
 }
 

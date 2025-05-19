@@ -267,6 +267,13 @@ export default class Player {
       const heightDiff = fullHeight - crouchHeight;
       this.debugBody.position.y = -(crouchHeight / 2) + (heightDiff / 2);
     }
+
+    // Check for collisions with deer
+    if (this.deerList) {
+      for (const deer of this.deerList) {
+        deer.checkPlayerCollision(this);
+      }
+    }
   }
 
   /**

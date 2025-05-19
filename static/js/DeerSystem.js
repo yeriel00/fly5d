@@ -117,6 +117,37 @@ export class Deer {
     
     // DEBUG: Ensure this deer is created
     console.log(`Deer created at position: ${this.group.position.toArray()}`);
+
+    this.hitTracker = {
+      body: { red: 0, yellow: 0, green: 0 },
+      head: { red: 0, yellow: 0, green: 0 }
+    };
+
+    // Initialize body and head positions
+    this.bodyPosition = new THREE.Vector3();
+    this.headPosition = new THREE.Vector3();
+  }
+
+  registerHit(hitbox, type) {
+    if (!['body', 'head'].includes(hitbox) || !['red', 'yellow', 'green'].includes(type)) {
+      console.warn('Invalid hitbox or apple type');
+      return;
+    }
+
+    this.hitTracker[hitbox][type]++;
+
+    // Check if the deer is killed
+    if (
+      (this.hitTracker.body.red >= 7) ||
+      (this.hitTracker.body.red >= 5 && this.hitTracker.head.red >= 2) ||
+      (this.hitTracker.body.yellow >= 5) ||
+      (this.hitTracker.body.yellow >= 3 && this.hitTracker.head.yellow >= 1) ||
+      (this.hitTracker.body.green >= 2) ||
+      (this.hitTracker.head.green >= 1)
+    ) {
+      this.alive = false;
+      console.log('Deer killed by apple hits');
+    }
   }
   
   createLegs(color) {
@@ -325,6 +356,9 @@ export class Deer {
     
     // Keep deer on the ground
     this.stayOnGround();
+
+    // Update body and head positions
+    this.updatePositions();
   }
   
   wander(deltaTime) {
@@ -1014,6 +1048,76 @@ export class Deer {
     // Reset direction change timer
     this.lastDirectionChange = Date.now();
   }
+
+  updatePositions() {
+    // Update body and head positions based on their world positions
+    this.body.getWorldPosition(this.bodyPosition);
+    this.head.getWorldPosition(this.headPosition);
+  }
+
+  checkCollision(apple) {
+    if (!this.alive) return false;
+
+    // Calculate distance to the apple
+    const applePosition = apple.mesh.position;
+    const bodyDistance = this.bodyPosition.distanceTo(applePosition);
+    const headDistance = this.headPosition.distanceTo(applePosition);
+
+    // Get the current radius values using the methods
+    const bodyRadius = this.getBodyRadius();
+    const headRadius = this.getHeadRadius();
+
+    // Debug log
+    console.log(`Apple collision check - Body distance: ${bodyDistance.toFixed(2)}, Head distance: ${headDistance.toFixed(2)}, bodyRadius: ${bodyRadius}, headRadius: ${headRadius}`);
+
+    // Check collision with body
+    if (bodyDistance <= bodyRadius) {
+      console.log(`Body hit detected with ${apple.type} apple!`);
+      const killed = this.hit(apple.type, 'body');
+      return true;
+    }
+
+    // Check collision with head
+    if (headDistance <= headRadius) {
+      console.log(`Head hit detected with ${apple.type} apple!`);
+      const killed = this.hit(apple.type, 'head');
+      return true;
+    }
+
+    return false;
+  }
+
+  checkPlayerCollision(player) {
+    if (!this.alive) return false;
+
+    // Get player's position and collision radius
+    const playerPosition = player.getPosition();
+    const playerRadius = player.getCollisionRadius();
+
+    // Calculate distances to the deer's body and head
+    const bodyDistance = this.bodyPosition.distanceTo(playerPosition);
+    const headDistance = this.headPosition.distanceTo(playerPosition);
+
+    // Check collision with body
+    if (bodyDistance <= this.config.bodyRadius + playerRadius) {
+        // Prevent player from walking through the deer
+        const collisionNormal = playerPosition.clone().sub(this.bodyPosition).normalize();
+        const penetrationDepth = this.config.bodyRadius + playerRadius - bodyDistance;
+        player.position.add(collisionNormal.multiplyScalar(penetrationDepth));
+        return true;
+    }
+
+    // Check collision with head
+    if (headDistance <= this.config.headRadius + playerRadius) {
+        // Prevent player from walking through the deer
+        const collisionNormal = playerPosition.clone().sub(this.headPosition).normalize();
+        const penetrationDepth = this.config.headRadius + playerRadius - headDistance;
+        player.position.add(collisionNormal.multiplyScalar(penetrationDepth));
+        return true;
+    }
+
+    return false;
+  }
 }
 
 // Main deer system class to manage all deer
@@ -1041,8 +1145,11 @@ export class DeerSystem {
   
   update(deltaTime) {
     // Update all deer
-    this.deer.forEach(deer => deer.update(deltaTime, this.apples));
-    
+    this.deer.forEach(deer => {
+      deer.update(deltaTime, this.apples);
+      deer.updatePositions(); // Ensure positions are updated
+    });
+
     // Remove eaten apples from the list
     this.apples = this.apples.filter(apple => !apple.isEaten);
   }
