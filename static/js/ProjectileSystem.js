@@ -203,8 +203,9 @@ export default class ProjectileSystem {
   /**
    * Update all projectiles
    * @param {number} deltaTime - Time since last update in seconds
+   * @param {Array} deerList - List of deer to check collisions against
    */
-  update(deltaTime) {
+  update(deltaTime, deerList) {
     // Count object types in collidables if debug is enabled
     if ((this.enableCollisionLogging || this.options.debugCollisions) && 
         this.projectiles.length > 0 && 
@@ -245,6 +246,12 @@ export default class ProjectileSystem {
       // Check for collisions with objects (trees, rocks, etc.)
       if (this._checkObjectCollisions(projectile)) {
         // Projectile hit something, remove it and continue
+        this._removeProjectile(i);
+        continue;
+      }
+
+      // Check for collisions with deer
+      if (this._checkDeerCollisions(projectile, deerList)) {
         this._removeProjectile(i);
         continue;
       }
@@ -879,5 +886,29 @@ export default class ProjectileSystem {
   enableDebug(enabled = true) {
     this.debug = enabled;
     console.log(`Projectile collision debug ${enabled ? 'enabled' : 'disabled'}`);
+  }
+
+  /**
+   * Check for collisions with deer and apply apple hit rules
+   * @param {Object} projectile - The projectile to check
+   * @param {Array} deerList - List of deer to check collisions against
+   */
+  _checkDeerCollisions(projectile, deerList) {
+    for (const deer of deerList) {
+      if (!deer.alive) continue;
+
+      // Ensure bodyPosition and headPosition are defined
+      if (!deer.bodyPosition || !deer.headPosition) {
+        console.warn('Deer missing bodyPosition or headPosition:', deer);
+        continue;
+      }
+
+      // Delegate collision check to the deer object
+      if (deer.checkCollision(projectile)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 }

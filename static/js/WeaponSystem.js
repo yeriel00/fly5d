@@ -487,7 +487,9 @@ export default class WeaponSystem {
   update(deltaTime) {
     // Update projectile system
     if (this.projectileSystem) {
-      this.projectileSystem.update(deltaTime);
+      // Assuming deerList is available in the scope
+      const deerList = this.scene.deerSystem?.deer || []; // Adjust based on actual variable name
+      this.projectileSystem.update(deltaTime, deerList);
     }
 
     // Update charge state if charging
