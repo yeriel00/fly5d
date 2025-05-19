@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import entityCollisionSystem from './EntityCollisionSystem.js';
 
 // Deer system configuration
 export const DEER_CONFIG = {
@@ -38,6 +39,9 @@ export class Deer {
       body: { red: 0, yellow: 0, green: 0 },
       head: { red: 0, yellow: 0, green: 0 }
     };
+    
+    // Register with the global collision system
+    entityCollisionSystem.registerEntity(this);
     this.isEating = false;
     this.targetApple = null;
     this.lastDirectionChange = 0;
@@ -940,6 +944,8 @@ export class Deer {
     if (this.scene && this.group) {
       this.scene.remove(this.group);
     }
+    // Unregister from collision system
+    entityCollisionSystem.unregisterEntity(this);
   }
   
   // NEW: Check if the deer would collide with any world objects at the given position
@@ -1055,13 +1061,18 @@ export class Deer {
     this.head.getWorldPosition(this.headPosition);
   }
 
-  checkCollision(apple) {
+  /**
+   * Check collision with a projectile
+   * @param {Object} projectile - The projectile to check collision with
+   * @returns {Boolean} - True if collision occurred
+   */
+  checkProjectileCollision(projectile) {
     if (!this.alive) return false;
 
-    // Calculate distance to the apple
-    const applePosition = apple.mesh.position;
-    const bodyDistance = this.bodyPosition.distanceTo(applePosition);
-    const headDistance = this.headPosition.distanceTo(applePosition);
+    // Calculate distance to the projectile
+    const projectilePosition = projectile.mesh.position;
+    const bodyDistance = this.bodyPosition.distanceTo(projectilePosition);
+    const headDistance = this.headPosition.distanceTo(projectilePosition);
 
     // Get the current radius values using the methods
     const bodyRadius = this.getBodyRadius();
@@ -1069,52 +1080,99 @@ export class Deer {
 
     // Check collision with body
     if (bodyDistance <= bodyRadius) {
-      const killed = this.hit(apple.type, 'body');
-      return true;
+      const killed = this.hit(projectile.type, 'body');
+      return {
+        hitArea: 'body',
+        killed: killed
+      };
     }
 
     // Check collision with head
     if (headDistance <= headRadius) {
-      const killed = this.hit(apple.type, 'head');
-      return true;
+      const killed = this.hit(projectile.type, 'head');
+      return {
+        hitArea: 'head',
+        killed: killed
+      };
     }
 
     return false;
   }
 
-  checkPlayerCollision(player) {
+  /**
+   * For backwards compatibility - alias to checkProjectileCollision
+   */
+  checkCollision(projectile) {
+    return this.checkProjectileCollision(projectile);
+  }
+
+  /**
+   * Check collision with another entity (like a player)
+   * @param {Object} entity - The entity to check collision with
+   * @returns {Object|Boolean} - Collision result or false if no collision
+   */
+  checkEntityCollision(entity) {
     if (!this.alive) return false;
 
-    // Get player's position and collision radius
-    const playerPosition = player.getPosition();
-    const playerRadius = player.getCollisionRadius();
+    // Get entity's position and collision radius
+    const entityPosition = entity.getPosition ? entity.getPosition() : entity.position;
+    const entityRadius = entity.getCollisionRadius ? entity.getCollisionRadius() : 5;
 
     // Get the current radius values using the methods
     const bodyRadius = this.getBodyRadius();
     const headRadius = this.getHeadRadius();
 
     // Calculate distances to the deer's body and head
-    const bodyDistance = this.bodyPosition.distanceTo(playerPosition);
-    const headDistance = this.headPosition.distanceTo(playerPosition);
+    const bodyDistance = this.bodyPosition.distanceTo(entityPosition);
+    const headDistance = this.headPosition.distanceTo(entityPosition);
 
     // Check collision with body
-    if (bodyDistance <= bodyRadius + playerRadius) {
-        // Prevent player from walking through the deer
-        const collisionNormal = playerPosition.clone().sub(this.bodyPosition).normalize();
-        const penetrationDepth = bodyRadius + playerRadius - bodyDistance;
-        player.position.add(collisionNormal.multiplyScalar(penetrationDepth));
-        return true;
+    if (bodyDistance <= bodyRadius + entityRadius) {
+      // Calculate collision response
+      const collisionNormal = entityPosition.clone().sub(this.bodyPosition).normalize();
+      const penetrationDepth = bodyRadius + entityRadius - bodyDistance;
+      
+      return {
+        hitArea: 'body',
+        collisionNormal: collisionNormal,
+        penetrationDepth: penetrationDepth,
+        position: this.bodyPosition
+      };
     }
 
     // Check collision with head
-    if (headDistance <= headRadius + playerRadius) {
-        // Prevent player from walking through the deer
-        const collisionNormal = playerPosition.clone().sub(this.headPosition).normalize();
-        const penetrationDepth = headRadius + playerRadius - headDistance;
-        player.position.add(collisionNormal.multiplyScalar(penetrationDepth));
-        return true;
+    if (headDistance <= headRadius + entityRadius) {
+      // Calculate collision response
+      const collisionNormal = entityPosition.clone().sub(this.headPosition).normalize();
+      const penetrationDepth = headRadius + entityRadius - headDistance;
+      
+      return {
+        hitArea: 'head',
+        collisionNormal: collisionNormal,
+        penetrationDepth: penetrationDepth,
+        position: this.headPosition
+      };
     }
 
+    return false;
+  }
+
+  /**
+   * For backwards compatibility - specifically handles player collisions
+   * @param {Object} player - The player to check collision with
+   * @returns {Boolean} - True if collision occurred
+   */
+  checkPlayerCollision(player) {
+    if (!this.alive) return false;
+
+    const collision = this.checkEntityCollision(player);
+    
+    if (collision) {
+      // Apply the penetration vector to move the player out of collision
+      player.position.add(collision.collisionNormal.multiplyScalar(collision.penetrationDepth));
+      return true;
+    }
+    
     return false;
   }
 }
