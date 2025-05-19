@@ -1067,19 +1067,14 @@ export class Deer {
     const bodyRadius = this.getBodyRadius();
     const headRadius = this.getHeadRadius();
 
-    // Debug log
-    console.log(`Apple collision check - Body distance: ${bodyDistance.toFixed(2)}, Head distance: ${headDistance.toFixed(2)}, bodyRadius: ${bodyRadius}, headRadius: ${headRadius}`);
-
     // Check collision with body
     if (bodyDistance <= bodyRadius) {
-      console.log(`Body hit detected with ${apple.type} apple!`);
       const killed = this.hit(apple.type, 'body');
       return true;
     }
 
     // Check collision with head
     if (headDistance <= headRadius) {
-      console.log(`Head hit detected with ${apple.type} apple!`);
       const killed = this.hit(apple.type, 'head');
       return true;
     }
@@ -1094,24 +1089,28 @@ export class Deer {
     const playerPosition = player.getPosition();
     const playerRadius = player.getCollisionRadius();
 
+    // Get the current radius values using the methods
+    const bodyRadius = this.getBodyRadius();
+    const headRadius = this.getHeadRadius();
+
     // Calculate distances to the deer's body and head
     const bodyDistance = this.bodyPosition.distanceTo(playerPosition);
     const headDistance = this.headPosition.distanceTo(playerPosition);
 
     // Check collision with body
-    if (bodyDistance <= this.config.bodyRadius + playerRadius) {
+    if (bodyDistance <= bodyRadius + playerRadius) {
         // Prevent player from walking through the deer
         const collisionNormal = playerPosition.clone().sub(this.bodyPosition).normalize();
-        const penetrationDepth = this.config.bodyRadius + playerRadius - bodyDistance;
+        const penetrationDepth = bodyRadius + playerRadius - bodyDistance;
         player.position.add(collisionNormal.multiplyScalar(penetrationDepth));
         return true;
     }
 
     // Check collision with head
-    if (headDistance <= this.config.headRadius + playerRadius) {
+    if (headDistance <= headRadius + playerRadius) {
         // Prevent player from walking through the deer
         const collisionNormal = playerPosition.clone().sub(this.headPosition).normalize();
-        const penetrationDepth = this.config.headRadius + playerRadius - headDistance;
+        const penetrationDepth = headRadius + playerRadius - headDistance;
         player.position.add(collisionNormal.multiplyScalar(penetrationDepth));
         return true;
     }
@@ -1180,9 +1179,6 @@ export class DeerSystem {
     const projectileRadius = (projectile.radius || 1.0) * 2.5;
     const projectileType = projectile.type || 'red';
     
-    // ADDED: Debug output for collision attempts
-    console.log(`Checking collision with ${this.deer.length} deer`);
-    
     // Check collision with each deer
     for (const deer of this.deer) {
       if (!deer.alive) continue;
@@ -1195,8 +1191,6 @@ export class DeerSystem {
           projectilePrevPos, projectilePos, headPos, headRadius + projectileRadius)) {
         // Head hit!
         const killed = deer.hit(projectileType, 'head');
-        
-        console.log("HEAD HIT DETECTED on deer!", killed ? "Deer killed!" : "Deer injured!");
         
         return {
           hit: true,
@@ -1212,16 +1206,10 @@ export class DeerSystem {
       const bodyPos = deer.getBodyPosition();
       const bodyRadius = deer.getBodyRadius() * 1.5;
       
-      if (projectilePos.distanceTo(bodyPos) < bodyRadius + projectileRadius * 5) {
-        console.log(`Projectile close to deer! Distance: ${projectilePos.distanceTo(bodyPos)}`);
-      }
-      
       if (this.lineSegmentSphereIntersection(
           projectilePrevPos, projectilePos, bodyPos, bodyRadius + projectileRadius)) {
         // Body hit!
         const killed = deer.hit(projectileType, 'body');
-        
-        console.log("BODY HIT DETECTED on deer!", killed ? "Deer killed!" : "Deer injured!");
         
         return {
           hit: true,
